@@ -1,469 +1,844 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Glashr - Real-time Messaging</title>
+import React, { useState, useEffect, useRef } from 'react';
+import { 
+  Send, Mic, Smile, Search, Sun, Moon, 
+  Trash2, CheckCheck, Sparkles, UserCheck, Cloud, CloudOff, RefreshCw,
+  Settings, Key, Image as ImageIcon, Volume2, VolumeX, Paperclip, ChevronLeft
+} from 'lucide-react';
+
+import { initializeApp, getApps, getApp } from 'firebase/app';
+import { getAuth, signInWithCustomToken, signInAnonymously } from 'firebase/auth';
+import { getFirestore, collection, doc, setDoc, deleteDoc, updateDoc, onSnapshot } from 'firebase/firestore';
+
+const INITIAL_PROFILES = {
+  user1: {
+    id: 'user1',
+    name: 'Tyce',
+    handle: '@tyce',
+    avatar: '🚙',
+    status: 'Online',
+    color: 'bg-cyan-500'
+  },
+  user2: {
+    id: 'user2',
+    name: 'Arch',
+    handle: '@arch',
+    avatar: '✏️',
+    status: 'Active now',
+    color: 'bg-teal-500'
+  }
+};
+
+const PRESET_EMOJIS = ['🧊', '❄️', '🏔️', '💙', '✨', '🔥', '👍', '😂', '🌊', '🎯', '🚀', '☕'];
+
+export default function App() {
+  const [profiles] = useState(INITIAL_PROFILES);
+  const [currentUserId, setCurrentUserId] = useState('user1'); // Active logged-in user on this device
+  const [activeChatUserId, setActiveChatUserId] = useState('user2'); // Target contact
+  
+  // Cloud & Messages state
+  const [messages, setMessages] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isCloudConnected, setIsCloudConnected] = useState(false);
+  const [dbInstance, setDbInstance] = useState(null);
+  
+  // Room ID & Firebase Config override for multi-device pairing
+  const [roomId, setRoomId] = useState(() => localStorage.getItem('glashr_room_id') || 'glashr-shared-room');
+  const [customFirebaseConfig, setCustomFirebaseConfig] = useState(() => localStorage.getItem('glashr_custom_firebase') || '');
+  const [showSettings, setShowSettings] = useState(false);
+  
+  // Preferences & Layout
+  const [isDarkMode, setIsDarkMode] = useState(true);
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [searchContact, setSearchContact] = useState('');
+  const [showMobileSidebar, setShowMobileSidebar] = useState(true);
+
+  const currentUser = profiles[currentUserId];
+  const activePartner = profiles[activeChatUserId];
+  const lastMessageCount = useRef(0);
+
+  useEffect(() => {
+    let unsubscribe = () => {};
+
+    const setupFirebaseSync = async () => {
+      setIsLoading(true);
+      try {
+        let firebaseConfig = null;
+
+        // Check custom config first, then platform provided config
+        if (customFirebaseConfig.trim()) {
+          try {
+            firebaseConfig = JSON.parse(customFirebaseConfig);
+          } catch (e) {
+            console.error("Invalid custom Firebase JSON");
+          }
+        }
+
+        if (!firebaseConfig && typeof __firebase_config !== 'undefined' && __firebase_config) {
+          firebaseConfig = JSON.parse(__firebase_config);
+        }
+
+        if (firebaseConfig) {
+          const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+          const auth = getAuth(app);
+          const db = getFirestore(app);
+
+          // Authenticate anonymously or with token
+          if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token && !customFirebaseConfig) {
+            await signInWithCustomToken(auth, __initial_auth_token);
+          } else {
+            await signInAnonymously(auth);
+          }
+
+          setDbInstance(db);
+          setIsCloudConnected(true);
+
+          const activeRoom = roomId.trim() || 'glashr-default-room';
+          
+          // Reference path in Firestore
+          const msgsRef = collection(db, 'glashr_rooms', activeRoom, 'messages');
+
+          // Real-time listener across all devices
+          unsubscribe = onSnapshot(
+            msgsRef,
+            (snapshot) => {
+              const loadedMsgs = [];
+              snapshot.forEach((docSnap) => {
+                loadedMsgs.push({ id: docSnap.id, ...docSnap.data() });
+              });
+              
+              // Sort by timestamp
+              loadedMsgs.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+              
+              // Play notification sound if new message arrived from partner
+              if (loadedMsgs.length > lastMessageCount.current && lastMessageCount.current > 0) {
+                const newest = loadedMsgs[loadedMsgs.length - 1];
+                if (newest.senderId !== currentUserId && soundEnabled) {
+                  playNotificationSound();
+                }
+              }
+              lastMessageCount.current = loadedMsgs.length;
+
+              setMessages(loadedMsgs);
+              setIsLoading(false);
+            },
+            (error) => {
+              console.error("Firestore sync error:", error);
+              setIsCloudConnected(false);
+              setIsLoading(false);
+            }
+          );
+        } else {
+          // Local fallback mode
+          setIsCloudConnected(false);
+          setIsLoading(false);
+        }
+      } catch (err) {
+        console.error("Firebase setup error:", err);
+        setIsCloudConnected(false);
+        setIsLoading(false);
+      }
+    };
+
+    setupFirebaseSync();
+
+    return () => unsubscribe();
+  }, [roomId, customFirebaseConfig, soundEnabled, currentUserId]);
+
+  const playNotificationSound = () => {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
+      osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.15); // A5
+      gain.gain.setValueAtTime(0.1, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.15);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.15);
+    } catch (e) {
+      // Audio context error ignore
+    }
+  };
+
+  const handleSwitchUser = (newUserId) => {
+    setCurrentUserId(newUserId);
+    if (newUserId === activeChatUserId) {
+      const otherUser = Object.keys(profiles).find(id => id !== newUserId);
+      setActiveChatUserId(otherUser);
+    }
+  };
+
+  const handleSendMessage = async (text, mediaUrl = null) => {
+    if (!text.trim() && !mediaUrl) return;
+
+    const msgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4);
+    const newMsg = {
+      id: msgId,
+      senderId: currentUserId,
+      receiverId: activeChatUserId,
+      text: text.trim(),
+      mediaUrl: mediaUrl || null,
+      timestamp: Date.now(),
+      reactions: {}
+    };
+
+    // Optimistic local update
+    setMessages(prev => [...prev, newMsg]);
+
+    // Save to cloud if connected
+    if (dbInstance) {
+      try {
+        const activeRoom = roomId.trim() || 'glashr-default-room';
+        const msgDocRef = doc(dbInstance, 'glashr_rooms', activeRoom, 'messages', msgId);
+        await setDoc(msgDocRef, newMsg);
+      } catch (err) {
+        console.error("Error saving message to Firestore:", err);
+      }
+    }
+  };
+
+  const handleDeleteMessage = async (msgId) => {
+    setMessages(prev => prev.filter(m => m.id !== msgId));
+
+    if (dbInstance) {
+      try {
+        const activeRoom = roomId.trim() || 'glashr-default-room';
+        const msgDocRef = doc(dbInstance, 'glashr_rooms', activeRoom, 'messages', msgId);
+        await deleteDoc(msgDocRef);
+      } catch (err) {
+        console.error("Error deleting message from Firestore:", err);
+      }
+    }
+  };
+
+  const handleAddReaction = async (msgId, emoji) => {
+    const targetMsg = messages.find(m => m.id === msgId);
+    if (!targetMsg) return;
+
+    const reactions = { ...(targetMsg.reactions || {}) };
+    const currentUsers = reactions[emoji] || [];
     
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
-        import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
-        import { getFirestore, collection, addDoc, onSnapshot, getDocs, updateDoc, doc, setDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore.js";
+    if (currentUsers.includes(currentUserId)) {
+      reactions[emoji] = currentUsers.filter(u => u !== currentUserId);
+      if (reactions[emoji].length === 0) delete reactions[emoji];
+    } else {
+      reactions[emoji] = [...currentUsers, currentUserId];
+    }
 
-        const fallbackConfig = {
-            apiKey: "AIzaSyABMP0-wOJomEF8TcDo_3n0Clo3ibYAWjY",
-            authDomain: "messaging-app-1fbf2.firebaseapp.com",
-            projectId: "messaging-app-1fbf2",
-            storageBucket: "messaging-app-1fbf2.firebasestorage.app",
-            messagingSenderId: "476912112074",
-            appId: "1:476912112074:web:f9c90361235636ed5dbf33"
-        };
+    setMessages(prev => prev.map(m => m.id === msgId ? { ...m, reactions } : m));
 
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : fallbackConfig;
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'messaging-app-1fbf2';
+    if (dbInstance) {
+      try {
+        const activeRoom = roomId.trim() || 'glashr-default-room';
+        const msgDocRef = doc(dbInstance, 'glashr_rooms', activeRoom, 'messages', msgId);
+        await updateDoc(msgDocRef, { reactions });
+      } catch (err) {
+        console.error("Error updating reaction in Firestore:", err);
+      }
+    }
+  };
 
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
+  const saveSettings = (newRoomId, newConfig) => {
+    setRoomId(newRoomId);
+    setCustomFirebaseConfig(newConfig);
+    localStorage.setItem('glashr_room_id', newRoomId);
+    localStorage.setItem('glashr_custom_firebase', newConfig);
+    setShowSettings(false);
+  };
 
-        window.db = db;
-        window.auth = auth;
-        window.collection = collection;
-        window.addDoc = addDoc;
-        window.onSnapshot = onSnapshot;
-        window.getDocs = getDocs;
-        window.updateDoc = updateDoc;
-        window.setDoc = setDoc;
-        window.deleteDoc = deleteDoc;
-        window.doc = doc;
+  // Contacts list
+  const contactsList = Object.values(profiles).filter(p => p.id !== currentUserId && 
+    p.name.toLowerCase().includes(searchContact.toLowerCase())
+  );
 
-        window.getUsersCol = () => collection(db, 'artifacts', appId, 'public', 'data', 'users');
-        window.getMessagesCol = () => collection(db, 'artifacts', appId, 'public', 'data', 'messages');
+  // Active conversation thread
+  const activeConversation = messages.filter(
+    m => (m.senderId === currentUserId && m.receiverId === activeChatUserId) ||
+         (m.senderId === activeChatUserId && m.receiverId === currentUserId)
+  );
 
-        const initAuth = async () => {
-            try {
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    await signInWithCustomToken(auth, __initial_auth_token);
-                } else {
-                    await signInAnonymously(auth);
-                }
-            } catch (err) {
-                console.error("Auth init error:", err);
-            }
-        };
-
-        onAuthStateChanged(auth, (user) => {
-            if (user) {
-                window.dispatchEvent(new Event('firebase-ready'));
-            }
-        });
-
-        initAuth();
-    </script>
-
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        .bg-dark { background-color: #288a88; }
-        .bg-med { background-color: #4fc2c0; }
-        .bg-light { background-color: #b7e8e7; }
-        .text-dark { color: #288a88; }
-        .text-med { color: #4fc2c0; }
-        .text-light { color: #b7e8e7; }
-        .border-dark { border-color: #288a88; }
-    </style>
-</head>
-<body class="bg-gray-100 h-screen font-sans text-dark">
-
-    <div id="confirm-modal" class="hidden fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4">
-        <div class="bg-white p-6 rounded-lg max-w-sm w-full">
-            <h3 id="confirm-msg" class="text-lg font-bold mb-4 text-dark">Are you sure?</h3>
-            <div class="flex gap-2">
-                <button onclick="hideConfirm()" class="flex-1 bg-med text-white py-2 rounded font-bold">Cancel</button>
-                <button id="confirm-btn" class="flex-1 bg-dark text-white py-2 rounded font-bold">Delete</button>
-            </div>
+  return (
+    <div className={`min-h-screen flex flex-col font-sans transition-colors duration-300 ${
+      isDarkMode ? 'bg-slate-950 text-cyan-50' : 'bg-slate-100 text-slate-900'
+    }`}>
+      
+      {/* Top Header Bar */}
+      <header className={`border-b px-4 py-2.5 flex items-center justify-between text-xs backdrop-blur-md z-30 ${
+        isDarkMode ? 'bg-slate-900/90 border-cyan-950 text-slate-300' : 'bg-white/90 border-slate-200 text-slate-600'
+      }`}>
+        <div className="flex items-center space-x-2">
+          <div className="w-7 h-7 rounded-xl bg-gradient-to-tr from-cyan-500 to-teal-400 text-slate-950 flex items-center justify-center font-black shadow-md shadow-cyan-500/20">
+            <Sparkles className="w-4 h-4 text-slate-950" />
+          </div>
+          <div className="flex flex-col">
+            <span className="font-extrabold tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-teal-300 text-sm leading-none">
+              GLASHR
+            </span>
+            <span className="text-[9px] text-slate-500 font-mono">Room: {roomId}</span>
+          </div>
+          
+          {/* Live Sync Badge */}
+          <div className="hidden md:flex items-center space-x-1 pl-3 border-l border-slate-800 text-[10px]">
+            {isCloudConnected ? (
+              <span className="flex items-center text-emerald-400 font-medium bg-emerald-950/60 border border-emerald-800/60 px-2 py-0.5 rounded-full shadow-sm">
+                <Cloud className="w-3 h-3 mr-1 animate-pulse text-emerald-400" /> Multi-Device Sync Active
+              </span>
+            ) : (
+              <span className="flex items-center text-amber-400 font-medium bg-amber-950/60 border border-amber-800/60 px-2 py-0.5 rounded-full">
+                <CloudOff className="w-3 h-3 mr-1" /> Local Mode (No Firebase)
+              </span>
+            )}
+          </div>
         </div>
-    </div>
 
-    <!-- Error Toast Notification -->
-    <div id="error-toast" class="hidden fixed bottom-5 right-5 bg-red-600 text-white px-4 py-3 rounded-lg shadow-lg z-[110] flex items-center gap-3">
-        <span id="error-text">Permission denied or connection issue.</span>
-        <button onclick="document.getElementById('error-toast').classList.add('hidden')" class="font-bold text-lg">&times;</button>
-    </div>
+        {/* User Switcher Controls */}
+        <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-1 bg-slate-800/50 p-1 rounded-xl border border-cyan-900/30">
+            {Object.values(profiles).map((p) => {
+              const isSelf = p.id === currentUserId;
+              return (
+                <button
+                  key={p.id}
+                  onClick={() => handleSwitchUser(p.id)}
+                  className={`flex items-center space-x-1.5 px-3 py-1 rounded-lg text-xs transition-all ${
+                    isSelf 
+                      ? 'bg-gradient-to-r from-cyan-500 to-teal-400 text-slate-950 font-bold shadow-md shadow-cyan-500/20' 
+                      : 'text-slate-400 hover:text-cyan-200'
+                  }`}
+                >
+                  <span className="text-sm">{p.avatar}</span>
+                  <span className="font-semibold">{p.name}</span>
+                </button>
+              );
+            })}
+          </div>
 
-    <div id="app" class="flex h-screen max-w-6xl mx-auto bg-white shadow-lg overflow-hidden">
-        <aside class="w-1/4 bg-dark text-white p-4 flex flex-col relative">
-            <h2 class="text-5xl font-bold mb-10 mt-4 flex items-center gap-3 text-white">
-                <svg viewBox="0 0 24 24" width="64" height="64" fill="white" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M2 22L8 12L12 18L17 5L22 22H2Z"/>
-                </svg>
-                Glashr
-            </h2>
+          {/* Sound Toggle */}
+          <button
+            onClick={() => setSoundEnabled(!soundEnabled)}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-cyan-300 transition-colors"
+            title={soundEnabled ? "Mute sounds" : "Enable sounds"}
+          >
+            {soundEnabled ? <Volume2 className="w-4 h-4 text-cyan-400" /> : <VolumeX className="w-4 h-4 text-slate-500" />}
+          </button>
+
+          {/* Settings Modal Toggle */}
+          <button
+            onClick={() => setShowSettings(true)}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-cyan-300 transition-colors"
+            title="Backend Sync Settings"
+          >
+            <Settings className="w-4 h-4" />
+          </button>
+
+          {/* Theme Switcher */}
+          <button
+            onClick={() => setIsDarkMode(!isDarkMode)}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-cyan-300 transition-colors"
+            title="Toggle Theme"
+          >
+            {isDarkMode ? <Sun className="w-4 h-4 text-amber-300" /> : <Moon className="w-4 h-4 text-slate-600" />}
+          </button>
+        </div>
+      </header>
+
+      {/* Main App Container */}
+      <div className="flex-1 max-w-6xl w-full mx-auto p-2 sm:p-4 md:p-6 flex justify-center items-center">
+        
+        <div className={`w-full h-[700px] rounded-3xl border flex overflow-hidden shadow-2xl transition-all ${
+          isDarkMode 
+            ? 'bg-slate-900/80 border-cyan-900/30 shadow-cyan-950/40' 
+            : 'bg-white border-slate-200 shadow-slate-300/50'
+        }`}>
+
+          {/* SIDEBAR: Contacts */}
+          <div className={`w-full sm:w-80 md:w-90 border-r flex flex-col shrink-0 transition-all ${
+            showMobileSidebar ? 'flex' : 'hidden sm:flex'
+          } ${
+            isDarkMode ? 'bg-slate-950/60 border-cyan-950' : 'bg-slate-50 border-slate-200'
+          }`}>
             
-            <div id="user-display-area" class="mb-6"></div>
-            
-            <h3 id="contacts-header" class="text-light text-xl font-bold uppercase mb-3">Contacts</h3>
-            <div id="contact-list" class="space-y-2 mb-4"></div>
-            
-            <div class="mt-auto">
-                <button id="toggle-add-btn" onclick="toggleAddContact()" class="w-full bg-white text-dark font-bold py-2 rounded hover:bg-gray-100 transition">Add Contact</button>
-                <div id="add-contact-fields" class="hidden mt-2 space-y-2">
-                    <input type="text" id="new-contact-input" placeholder="Contact Name" class="w-full p-2 text-black rounded text-sm">
-                    <div class="flex gap-2">
-                        <button onclick="toggleAddContact()" class="flex-1 bg-light text-dark text-xs py-2 rounded font-bold">Cancel</button>
-                        <button onclick="addContact()" class="flex-1 bg-med text-white text-xs py-2 rounded font-bold">Confirm</button>
-                    </div>
+            <div className="p-4 border-b border-cyan-950/30 flex items-center justify-between">
+              <div className="flex items-center space-x-2.5">
+                <span className="text-2xl">{currentUser.avatar}</span>
+                <div>
+                  <h2 className="font-bold text-sm leading-tight">{currentUser.name}</h2>
+                  <p className="text-[11px] text-cyan-400 font-medium">Logged in on this device</p>
                 </div>
+              </div>
+              <div className="p-1.5 rounded-full bg-cyan-500/10 text-cyan-400">
+                <UserCheck className="w-4 h-4" />
+              </div>
             </div>
-        </aside>
 
-        <main class="flex-1 flex flex-col">
-            <header class="p-4 border-b flex items-center justify-center">
-                <h2 id="chat-header" class="text-2xl font-bold text-dark">Select a contact</h2>
-            </header>
-            <div id="chat-messages" class="flex-1 p-6 overflow-y-auto bg-light flex flex-col space-y-4"></div>
-            <footer class="p-4 border-t bg-white">
-                <form id="message-form" class="flex space-x-2">
-                    <input type="text" id="message-input" placeholder="Shoot the breeze..." class="flex-1 border border-dark rounded-full px-4 py-2 focus:outline-none text-dark">
-                    <button type="submit" class="bg-dark text-white px-6 py-2 rounded-full hover:bg-med">Send</button>
-                </form>
-            </footer>
-        </main>
+            {/* Contact Search */}
+            <div className="p-3">
+              <div className={`flex items-center px-3 py-2 rounded-xl border text-xs ${
+                isDarkMode ? 'bg-slate-900 border-cyan-900/30 text-cyan-100' : 'bg-white border-slate-200'
+              }`}>
+                <Search className="w-3.5 h-3.5 text-slate-400 mr-2" />
+                <input
+                  type="text"
+                  placeholder="Search contacts..."
+                  value={searchContact}
+                  onChange={(e) => setSearchContact(e.target.value)}
+                  className="w-full bg-transparent focus:outline-none placeholder-slate-500"
+                />
+              </div>
+            </div>
+
+            {/* Contacts list */}
+            <div className="flex-1 overflow-y-auto px-2 space-y-1">
+              <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                Direct Contacts
+              </div>
+
+              {contactsList.map((contact) => {
+                const isSelected = contact.id === activeChatUserId;
+                const lastMsg = messages
+                  .filter(m => (m.senderId === currentUserId && m.receiverId === contact.id) || (m.senderId === contact.id && m.receiverId === currentUserId))
+                  .pop();
+
+                return (
+                  <button
+                    key={contact.id}
+                    onClick={() => {
+                      setActiveChatUserId(contact.id);
+                      setShowMobileSidebar(false);
+                    }}
+                    className={`w-full p-3 rounded-2xl flex items-center space-x-3 transition-all text-left ${
+                      isSelected
+                        ? 'bg-gradient-to-r from-cyan-500/20 to-teal-500/10 border border-cyan-500/40 text-cyan-100 shadow-sm'
+                        : isDarkMode
+                          ? 'hover:bg-slate-900/60 text-slate-300'
+                          : 'hover:bg-slate-200/60 text-slate-800'
+                    }`}
+                  >
+                    <div className="relative shrink-0">
+                      <div className={`w-11 h-11 rounded-2xl ${contact.color} flex items-center justify-center text-xl shadow-md`}>
+                        {contact.avatar}
+                      </div>
+                      <span className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 ${
+                        isDarkMode ? 'border-slate-950' : 'border-white'
+                      } bg-emerald-400`} />
+                    </div>
+
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between mb-0.5">
+                        <span className="font-semibold text-xs truncate">{contact.name}</span>
+                        {lastMsg && (
+                          <span className="text-[10px] text-slate-500">
+                            {new Date(lastMsg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-400 truncate">
+                        {lastMsg ? (lastMsg.mediaUrl ? '📷 Photo / Attachment' : lastMsg.text) : <span className="italic text-cyan-400">Tap to start live message thread</span>}
+                      </p>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Room Info Footer */}
+            <div className="p-3 border-t border-cyan-950/30 text-[11px] text-slate-500 flex items-center justify-between">
+              <span>Sync Room ID:</span>
+              <span className="font-mono text-cyan-400 font-bold bg-slate-900 px-2 py-0.5 rounded border border-cyan-900/40">
+                {roomId}
+              </span>
+            </div>
+
+          </div>
+
+          {/* CHAT AREA */}
+          <div className={`flex-1 flex flex-col h-full ${
+            !showMobileSidebar ? 'flex' : 'hidden sm:flex'
+          }`}>
+            
+            {/* Header */}
+            <div className={`px-4 py-3 border-b flex items-center justify-between backdrop-blur-md ${
+              isDarkMode ? 'bg-slate-950/40 border-cyan-950' : 'bg-slate-50 border-slate-200'
+            }`}>
+              <div className="flex items-center space-x-3">
+                <button 
+                  onClick={() => setShowMobileSidebar(true)}
+                  className="sm:hidden p-1.5 rounded-xl hover:bg-slate-800 text-slate-400"
+                >
+                  <ChevronLeft className="w-5 h-5" />
+                </button>
+
+                <div className={`w-9 h-9 rounded-xl ${activePartner.color} flex items-center justify-center text-lg shadow-sm`}>
+                  {activePartner.avatar}
+                </div>
+
+                <div>
+                  <h2 className="font-bold text-sm tracking-wide">{activePartner.name}</h2>
+                  <p className="text-[11px] text-cyan-400 flex items-center space-x-1">
+                    <span>{activePartner.handle}</span>
+                    <span className="text-slate-500">•</span>
+                    <span className="text-emerald-400">{activePartner.status}</span>
+                  </p>
+                </div>
+              </div>
+
+              <div className="text-xs text-slate-500 font-medium">
+                Real-Time Cloud Connected
+              </div>
+            </div>
+
+            {/* Conversation Feed */}
+            <div className={`flex-1 p-4 overflow-y-auto space-y-3 ${
+              isDarkMode ? 'bg-slate-950/20' : 'bg-slate-50/30'
+            }`}>
+              
+              {isLoading ? (
+                <div className="h-full flex flex-col items-center justify-center text-center space-y-2 text-slate-400">
+                  <RefreshCw className="w-6 h-6 animate-spin text-cyan-400" />
+                  <p className="text-xs">Syncing real-time messages across devices...</p>
+                </div>
+              ) : activeConversation.length === 0 ? (
+                <div className="h-full flex flex-col items-center justify-center text-center p-6 space-y-3">
+                  <div className="w-16 h-16 rounded-3xl bg-gradient-to-tr from-cyan-500 to-teal-400 p-0.5 shadow-xl shadow-cyan-500/20">
+                    <div className="w-full h-full bg-slate-950/90 rounded-[22px] flex items-center justify-center text-3xl">
+                      {activePartner.avatar}
+                    </div>
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-base text-cyan-200">Start Messaging {activePartner.name}</h3>
+                    <p className="text-xs text-slate-400 mt-1 max-w-sm">
+                      Messages sent here stay in sync live across all your devices using room code <strong className="text-cyan-300 font-mono">{roomId}</strong>.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                activeConversation.map((msg) => {
+                  const isMe = msg.senderId === currentUserId;
+                  return (
+                    <MessageBubble
+                      key={msg.id}
+                      msg={msg}
+                      isMe={isMe}
+                      onDelete={() => handleDeleteMessage(msg.id)}
+                      onReact={(emoji) => handleAddReaction(msg.id, emoji)}
+                      isDarkMode={isDarkMode}
+                    />
+                  );
+                })
+              )}
+
+            </div>
+
+            {/* Input Composer */}
+            <ChatComposer 
+              onSend={handleSendMessage}
+              partnerName={activePartner.name}
+              isDarkMode={isDarkMode}
+            />
+
+          </div>
+
+        </div>
+
+      </div>
+
+      {/* Settings Modal */}
+      {showSettings && (
+        <BackendSettingsModal 
+          roomId={roomId}
+          customConfig={customFirebaseConfig}
+          onSave={saveSettings}
+          onClose={() => setShowSettings(false)}
+          isDarkMode={isDarkMode}
+        />
+      )}
+
+      <footer className="py-2 text-center text-[11px] text-slate-500">
+        Glashr • Permanent Cross-Device Real-Time Cloud Engine
+      </footer>
     </div>
+  );
+}
 
-    <script>
-        let currentUser = localStorage.getItem('chat-user') || null; 
-        let activeChat = '';
-        let contacts = [];
-        let allMessages = [];
-        let expandedContact = null;
-        let isUserMenuExpanded = false;
-        let contactToRename = null;
-        let isFirestoreAvailable = true;
+function ChatComposer({ onSend, partnerName, isDarkMode }) {
+  const [inputText, setInputText] = useState('');
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [showImagePrompt, setShowImagePrompt] = useState(false);
+  const [imageUrl, setImageUrl] = useState('');
 
-        function showError(msg) {
-            if (!msg || msg.toLowerCase().includes('permission') || msg.toLowerCase().includes('insufficient')) return;
-            const toast = document.getElementById('error-toast');
-            document.getElementById('error-text').innerText = msg;
-            toast.classList.remove('hidden');
-            setTimeout(() => { toast.classList.add('hidden'); }, 6000);
-        }
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!inputText.trim() && !imageUrl.trim()) return;
+    onSend(inputText, imageUrl.trim() || null);
+    setInputText('');
+    setImageUrl('');
+    setShowEmojiPicker(false);
+    setShowImagePrompt(false);
+  };
 
-        function renderUserArea() {
-            const container = document.getElementById('user-display-area');
-            if (currentUser) {
-                container.innerHTML = `
-    <div class="bg-med rounded-lg text-white shadow-lg overflow-hidden">
-        <div class="p-4 flex justify-between items-center">
-            <div>
-                <p class="text-xs font-bold uppercase opacity-80 mb-1">Logged in as:</p>
-                <p class="font-bold truncate">${currentUser}</p>
-            </div>
-            <button onclick="isUserMenuExpanded = !isUserMenuExpanded; renderUserArea()" class="p-1 rounded-full hover:bg-black/20 transition-colors">
-                <svg viewBox="0 0 24 24" fill="currentColor" width="24" height="24">
-                    <circle cx="4" cy="12" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="20" cy="12" r="2" />
-                </svg>
+  const handleFileUpload = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        onSend('', reader.result);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  return (
+    <div className={`p-3 border-t relative ${
+      isDarkMode ? 'bg-slate-950/80 border-cyan-950' : 'bg-white border-slate-200'
+    }`}>
+      
+      {/* Quick Emoji Bar */}
+      {showEmojiPicker && (
+        <div className="p-2 mb-2 bg-slate-900 border border-cyan-900/40 rounded-2xl grid grid-cols-6 gap-2">
+          {PRESET_EMOJIS.map(emoji => (
+            <button
+              key={emoji}
+              onClick={() => {
+                setInputText(prev => prev + emoji);
+                setShowEmojiPicker(false);
+              }}
+              className="p-1.5 hover:bg-cyan-950/60 rounded-xl text-lg transition-transform hover:scale-125 text-center"
+            >
+              {emoji}
             </button>
+          ))}
         </div>
-        ${isUserMenuExpanded ? `
-            <div class="bg-med text-white p-2 space-y-1">
-                <button onclick="isUserMenuExpanded = false; showRenameInput(currentUser, true)" class="block w-full text-left px-4 py-2 hover:bg-black/10 font-bold rounded-lg">Rename User</button>
-                <button onclick="isUserMenuExpanded = false; renderSwitchList()" class="block w-full text-left px-4 py-2 hover:bg-black/10 font-bold rounded-lg">Switch User</button>
-            </div>
-        ` : ''}
-    </div>`;
-            } else {
-                container.innerHTML = '';
-            }
-            renderUI();
-        }
+      )}
 
-        function toggleContactMenu(name) { expandedContact = expandedContact === name ? null : name; renderUI(); }
-        function hideConfirm() { document.getElementById('confirm-modal').classList.add('hidden'); }
+      {/* Image URL Prompt */}
+      {showImagePrompt && (
+        <div className="p-2 mb-2 bg-slate-900 border border-cyan-900/40 rounded-2xl flex items-center space-x-2">
+          <input
+            type="url"
+            placeholder="Paste image URL..."
+            value={imageUrl}
+            onChange={(e) => setImageUrl(e.target.value)}
+            className="flex-1 px-3 py-1.5 text-xs bg-slate-950 rounded-xl border border-slate-800 text-cyan-100 focus:outline-none"
+          />
+          <button
+            type="button"
+            onClick={() => setShowImagePrompt(false)}
+            className="px-3 py-1 bg-cyan-500 text-slate-950 font-bold rounded-xl text-xs"
+          >
+            Attach
+          </button>
+        </div>
+      )}
+
+      <form onSubmit={handleSubmit} className="flex items-center space-x-2">
         
-        function confirmDelete(name) {
-            document.getElementById('confirm-msg').innerText = `Are you sure you want to delete "${name}"?`;
-            document.getElementById('confirm-modal').classList.remove('hidden');
-            document.getElementById('confirm-btn').onclick = async () => { 
-                contacts = contacts.filter(c => c !== name);
-                localStorage.setItem('glashr_contacts', JSON.stringify(contacts));
+        {/* Attachment & Photo options */}
+        <label className="cursor-pointer p-2 rounded-xl text-slate-400 hover:text-cyan-300 hover:bg-slate-800/50 transition-colors">
+          <Paperclip className="w-4 h-4" />
+          <input type="file" accept="image/*" onChange={handleFileUpload} className="hidden" />
+        </label>
 
-                if (isFirestoreAvailable) {
-                    try {
-                        const snapshot = await window.getDocs(window.getUsersCol());
-                        for (const d of snapshot.docs) { 
-                            if (d.data().name === name) {
-                                await window.deleteDoc(d.ref); 
-                            }
-                        }
-                    } catch (err) {
-                        console.warn("Firestore delete permission error, running in local mode:", err);
-                        isFirestoreAvailable = false;
-                    }
-                }
+        <button
+          type="button"
+          onClick={() => setShowImagePrompt(!showImagePrompt)}
+          className={`p-2 rounded-xl transition-colors ${
+            showImagePrompt ? 'text-cyan-300 bg-cyan-950/60' : 'text-slate-400 hover:text-cyan-300 hover:bg-slate-800/50'
+          }`}
+          title="Attach Image Link"
+        >
+          <ImageIcon className="w-4 h-4" />
+        </button>
 
-                if (activeChat === name) activeChat = ''; 
-                expandedContact = null; 
-                renderUI(); 
-                hideConfirm(); 
-            };
-        }
+        {/* Emoji Button */}
+        <button
+          type="button"
+          onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+          className={`p-2 rounded-xl transition-colors ${
+            showEmojiPicker ? 'text-cyan-300 bg-cyan-950/60' : 'text-slate-400 hover:text-cyan-300 hover:bg-slate-800/50'
+          }`}
+          title="Insert Emoji"
+        >
+          <Smile className="w-4 h-4" />
+        </button>
 
-        function showRenameInput(name, isMe = false) {
-            isUserMenuExpanded = false;
-            contactToRename = name;
-            renderUserArea();
-            const contactList = document.getElementById('contact-list');
-            document.getElementById('contacts-header').innerText = `RENAME "${name}"`;
-            contactList.innerHTML = `
-                <div class="bg-white p-4 rounded-lg space-y-2">
-                    <input type="text" id="rename-input" placeholder="New Name" class="w-full p-2 border rounded text-black text-sm">
-                    <div class="flex gap-2">
-                        <button onclick="document.getElementById('contacts-header').innerText = 'Contacts'; renderUI()" class="flex-1 bg-light text-dark text-xs py-2 rounded font-bold">Cancel</button>
-                        <button onclick="performRename('${isMe}')" class="flex-1 bg-med text-white text-xs py-2 rounded font-bold">Confirm</button>
-                    </div>
-                </div>
-            `;
-        }
+        {/* Input Text Box */}
+        <input
+          type="text"
+          value={inputText}
+          onChange={(e) => setInputText(e.target.value)}
+          placeholder={`Message to ${partnerName}...`}
+          className={`flex-1 px-4 py-2 rounded-full text-xs sm:text-sm focus:outline-none transition-all ${
+            isDarkMode 
+              ? 'bg-slate-900 border border-slate-800 text-cyan-50 placeholder-slate-500 focus:border-cyan-500/60 focus:ring-1 focus:ring-cyan-500/40' 
+              : 'bg-slate-100 border border-slate-200 text-slate-900 placeholder-slate-400 focus:border-cyan-500'
+          }`}
+        />
 
-        async function performRename(isMe) {
-            const newName = document.getElementById('rename-input').value.trim();
-            if(!newName) return;
+        {/* Send Button */}
+        <button
+          type="submit"
+          disabled={!inputText.trim() && !imageUrl.trim()}
+          className={`p-2.5 rounded-full font-bold transition-all transform active:scale-95 ${
+            inputText.trim() || imageUrl.trim()
+              ? 'bg-gradient-to-r from-cyan-500 to-teal-400 text-slate-950 shadow-lg shadow-cyan-500/20'
+              : 'bg-slate-800 text-slate-600 cursor-not-allowed'
+          }`}
+          title="Send message"
+        >
+          <Send className="w-4 h-4" />
+        </button>
 
-            const oldName = contactToRename;
-            const idx = contacts.indexOf(oldName);
-            if (idx !== -1) contacts[idx] = newName;
-            localStorage.setItem('glashr_contacts', JSON.stringify(contacts));
+      </form>
+    </div>
+  );
+}
 
-            if (isMe === 'true') { 
-                currentUser = newName; 
-                localStorage.setItem('chat-user', currentUser); 
-            }
-            if (activeChat === oldName) activeChat = newName;
+function MessageBubble({ msg, isMe, onDelete, onReact, isDarkMode }) {
+  const [showActions, setShowActions] = useState(false);
+  const formattedTime = new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-            if (isFirestoreAvailable) {
-                try {
-                    const snapshot = await window.getDocs(window.getUsersCol());
-                    for (const d of snapshot.docs) { 
-                        if (d.data().name === oldName) {
-                            await window.updateDoc(d.ref, { name: newName }); 
-                        }
-                    }
-                } catch (err) {
-                    console.warn("Firestore rename error, saved locally:", err);
-                    isFirestoreAvailable = false;
-                }
-            }
-
-            document.getElementById('contacts-header').innerText = "Contacts";
-            renderUserArea();
-            renderUI();
-        }
-
-        function renderSwitchList() {
-            isUserMenuExpanded = false;
-            renderUserArea();
-            const contactList = document.getElementById('contact-list');
-            const contactsHeader = document.getElementById('contacts-header');
-            contactsHeader.style.display = 'block';
-            contactsHeader.innerText = "SELECT A USER";
-            contactList.innerHTML = '';
-            contacts.forEach(u => {
-                const btn = document.createElement('button');
-                btn.className = 'block w-full text-left p-2 bg-dark text-white font-bold rounded hover:bg-emerald-900 transition';
-                btn.innerText = u;
-                btn.onclick = () => { currentUser = u; localStorage.setItem('chat-user', u); contactsHeader.innerText = "Contacts"; renderUserArea(); };
-                contactList.appendChild(btn);
-            });
-        }
-
-        function toggleAddContact() { 
-            document.getElementById('toggle-add-btn').classList.toggle('hidden'); 
-            document.getElementById('add-contact-fields').classList.toggle('hidden'); 
-        }
-
-        async function addContact() { 
-            const name = document.getElementById('new-contact-input').value.trim(); 
-            if(name) { 
-                if (!contacts.includes(name)) {
-                    contacts.push(name);
-                    localStorage.setItem('glashr_contacts', JSON.stringify(contacts));
-                }
-
-                if (isFirestoreAvailable) {
-                    try {
-                        await window.addDoc(window.getUsersCol(), { name: name, createdAt: new Date() }); 
-                    } catch (err) {
-                        console.warn("Firestore write restricted on current domain, saved locally:", err);
-                        isFirestoreAvailable = false;
-                    }
-                }
-
-                document.getElementById('new-contact-input').value = ''; 
-                toggleAddContact(); 
-                renderUI(); 
-            } 
-        }
-
-        async function loadContacts() {
-            const storedLocal = JSON.parse(localStorage.getItem('glashr_contacts') || '[]');
-            storedLocal.forEach(c => { if (!contacts.includes(c)) contacts.push(c); });
-            if (contacts.length === 0) {
-                contacts = ['Alex', 'Jordan', 'Taylor'];
-                localStorage.setItem('glashr_contacts', JSON.stringify(contacts));
-            }
-
-            if (isFirestoreAvailable) {
-                try {
-                    const snapshot = await window.getDocs(window.getUsersCol());
-                    snapshot.forEach(doc => { 
-                        const data = doc.data();
-                        if (data && data.name && !contacts.includes(data.name)) {
-                            contacts.push(data.name); 
-                        }
-                    });
-                    localStorage.setItem('glashr_contacts', JSON.stringify(contacts));
-                } catch (err) {
-                    console.warn("Firestore load failed on domain, using local contacts:", err);
-                    isFirestoreAvailable = false;
-                }
-            }
-            renderUI();
-        }
-
-        window.addEventListener('firebase-ready', async () => {
-            try {
-                window.onSnapshot(window.getMessagesCol(), (snapshot) => {
-                    allMessages = []; 
-                    snapshot.forEach(doc => allMessages.push(doc.data())); 
-                    const localMsgs = JSON.parse(localStorage.getItem('glashr_messages') || '[]');
-                    localMsgs.forEach(m => {
-                        if (!allMessages.some(am => am.text === m.text && am.sender === m.sender && am.receiver === m.receiver)) {
-                            allMessages.push(m);
-                        }
-                    });
-                    allMessages.sort((a, b) => {
-                        const timeA = a.timestamp?.seconds || (a.timestamp ? new Date(a.timestamp).getTime() / 1000 : 0);
-                        const timeB = b.timestamp?.seconds || (b.timestamp ? new Date(b.timestamp).getTime() / 1000 : 0);
-                        return timeA - timeB;
-                    });
-                    renderUI();
-                }, (error) => {
-                    console.warn("Messages listener restricted, using local storage messages:", error);
-                    isFirestoreAvailable = false;
-                    allMessages = JSON.parse(localStorage.getItem('glashr_messages') || '[]');
-                    renderUI();
-                });
-                await loadContacts();
-            } catch (err) {
-                console.warn("Messaging init fallback:", err);
-                isFirestoreAvailable = false;
-                await loadContacts();
-            }
-        });
-
-        setTimeout(() => {
-            if (contacts.length === 0) {
-                loadContacts();
-            }
-        }, 800);
-
-        function renderUI() {
-            document.getElementById('chat-header').innerText = activeChat || "Select a contact";
-            const contactList = document.getElementById('contact-list');
-            const contactsHeader = document.getElementById('contacts-header');
-            
-            if (!currentUser) {
-                contactList.innerHTML = `<button onclick="renderSwitchList()" class="w-full bg-med text-white font-bold py-4 rounded-lg hover:bg-emerald-600 transition text-lg uppercase shadow-md">SELECT A USER</button>`;
-                contactsHeader.style.display = 'none';
-            } else {
-                contactsHeader.style.display = 'block';
-                contactsHeader.innerText = "Contacts";
-                contactList.innerHTML = '';
-                contacts.forEach(contact => {
-                    if (contact !== currentUser) {
-                        const isSelected = activeChat === contact;
-                        const isExpanded = expandedContact === contact;
-                        const div = document.createElement('div');
-                        div.className = `rounded ${isExpanded ? 'bg-white' : (isSelected ? 'bg-med' : 'bg-white')}`;
-                        div.innerHTML = `
-                            <div class="flex items-center justify-between p-2 font-bold ${!isExpanded && isSelected ? 'text-white' : 'text-dark'}">
-                                <span onclick="activeChat = '${contact}'; renderUI();" class="flex-1 cursor-pointer">${contact}</span>
-                                <button onclick="toggleContactMenu('${contact}')" class="p-1 rounded-full ${isSelected ? 'text-white' : 'text-dark'}">
-                                    <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
-                                        <circle cx="4" cy="12" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="20" cy="12" r="2" />
-                                    </svg>
-                                </button>
-                            </div>
-                            ${isExpanded ? `
-                                <div class="bg-white text-dark border-t border-gray-200 p-2 space-y-1 rounded-b">
-                                    <button onclick="expandedContact = null; showRenameInput('${contact}')" class="block w-full text-left px-4 py-2 hover:bg-gray-100 font-bold rounded">Rename User</button>
-                                    <button onclick="expandedContact = null; confirmDelete('${contact}')" class="block w-full text-left px-4 py-2 hover:bg-gray-100 font-bold text-dark rounded">Delete User</button>
-                                </div>
-                            ` : ''}
-                        `;
-                        contactList.appendChild(div);
-                    }
-                });
-            }
-
-            const chatBox = document.getElementById('chat-messages');
-            chatBox.innerHTML = '';
-            allMessages.forEach(msg => {
-                if ((msg.sender === currentUser && msg.receiver === activeChat) || (msg.sender === activeChat && msg.receiver === currentUser)) {
-                    const div = document.createElement('div');
-                    let time = '';
-                    if (msg.timestamp) {
-                        const secs = msg.timestamp.seconds || new Date(msg.timestamp).getTime() / 1000;
-                        time = new Date(secs * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                    }
-                    div.className = `flex flex-col ${msg.sender === currentUser ? 'items-end' : 'items-start'}`;
-                    div.innerHTML = `
-                        <div class="p-3 rounded-lg max-w-xs ${msg.sender === currentUser ? 'bg-dark text-white' : 'bg-white border text-dark'}">
-                            ${msg.text}
-                        </div>
-                        <p class="text-[10px] opacity-70 mt-1 px-1">${time}</p>
-                    `;
-                    chatBox.appendChild(div);
-                }
-            });
-        }
-
-        document.getElementById('message-form').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const input = document.getElementById('message-input');
-            const text = input.value.trim();
-            if (text && activeChat && currentUser) {
-                const msgObj = { 
-                    text: text, 
-                    sender: currentUser, 
-                    receiver: activeChat, 
-                    timestamp: { seconds: Math.floor(Date.now() / 1000) } 
-                };
-
-                allMessages.push(msgObj);
-                let localMsgs = JSON.parse(localStorage.getItem('glashr_messages') || '[]');
-                localMsgs.push(msgObj);
-                localStorage.setItem('glashr_messages', JSON.stringify(localMsgs));
-                input.value = '';
-                renderUI();
-
-                if (isFirestoreAvailable) {
-                    try {
-                        await window.addDoc(window.getMessagesCol(), { 
-                            text: text, 
-                            sender: currentUser, 
-                            receiver: activeChat, 
-                            timestamp: new Date() 
-                        });
-                    } catch (err) {
-                        console.warn("Firestore send message error, using local storage mode:", err);
-                        isFirestoreAvailable = false;
-                    }
-                }
-            }
-        });
+  return (
+    <div 
+      className={`group relative flex flex-col ${isMe ? 'items-end' : 'items-start'}`}
+      onMouseEnter={() => setShowActions(true)}
+      onMouseLeave={() => setShowActions(false)}
+    >
+      <div className={`relative max-w-[80%] px-4 py-2.5 rounded-2xl text-xs sm:text-sm shadow-sm ${
+        isMe
+          ? 'bg-gradient-to-r from-cyan-500 to-teal-500 text-slate-950 font-medium rounded-br-xs'
+          : isDarkMode
+            ? 'bg-slate-800 text-cyan-50 rounded-bl-xs border border-slate-700/60'
+            : 'bg-slate-200 text-slate-900 rounded-bl-xs'
+      }`}>
         
-        renderUserArea();
-    </script>
-</body>
-</html>
+        {/* Attached Photo */}
+        {msg.mediaUrl && (
+          <div className="mb-2 overflow-hidden rounded-xl border border-black/10 max-w-xs">
+            <img src={msg.mediaUrl} alt="Attachment" className="max-h-60 w-full object-cover" />
+          </div>
+        )}
+
+        {/* Text body */}
+        {msg.text && (
+          <p className="leading-relaxed whitespace-pre-wrap break-words">
+            {msg.text}
+          </p>
+        )}
+
+        {/* Timestamp & Status */}
+        <div className={`mt-1 flex items-center justify-end space-x-1 text-[9px] ${
+          isMe ? 'text-slate-900/70' : 'text-slate-400'
+        }`}>
+          <span>{formattedTime}</span>
+          {isMe && <CheckCheck className="w-3 h-3 text-slate-900/80" />}
+        </div>
+
+        {/* Hover action menu */}
+        {showActions && (
+          <div className={`absolute -top-7 ${isMe ? 'right-0' : 'left-0'} bg-slate-900 border border-cyan-900/60 rounded-xl px-2 py-1 flex items-center space-x-1 shadow-lg z-10`}>
+            {['🧊', '🔥', '❤️', '👍'].map(emoji => (
+              <button 
+                key={emoji}
+                onClick={() => onReact(emoji)}
+                className="text-xs hover:scale-125 transition-transform"
+              >
+                {emoji}
+              </button>
+            ))}
+            <div className="w-px h-3 bg-slate-700 mx-1" />
+            <button onClick={onDelete} className="text-slate-400 hover:text-red-400" title="Delete message">
+              <Trash2 className="w-3 h-3" />
+            </button>
+          </div>
+        )}
+
+      </div>
+
+      {/* Reaction Badges */}
+      {msg.reactions && Object.keys(msg.reactions).length > 0 && (
+        <div className="flex gap-1 mt-0.5">
+          {Object.entries(msg.reactions).map(([emoji, users]) => (
+            <span key={emoji} className="text-[10px] bg-slate-800/80 border border-slate-700 px-1.5 py-0.2 rounded-full">
+              {emoji} {users.length}
+            </span>
+          ))}
+        </div>
+      )}
+
+    </div>
+  );
+}
+
+function BackendSettingsModal({ roomId, customConfig, onSave, onClose, isDarkMode }) {
+  const [localRoom, setLocalRoom] = useState(roomId);
+  const [localConfig, setLocalConfig] = useState(customConfig);
+
+  return (
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className={`w-full max-w-md rounded-3xl p-6 border shadow-2xl ${
+        isDarkMode ? 'bg-slate-900 border-cyan-900/50 text-cyan-50' : 'bg-white border-slate-300 text-slate-900'
+      }`}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center space-x-2">
+            <Key className="w-5 h-5 text-cyan-400" />
+            <h3 className="font-extrabold text-base">Backend Sync Settings</h3>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-cyan-200 font-bold text-sm">✕</button>
+        </div>
+
+        <p className="text-xs text-slate-400 mb-4">
+          To message across multiple devices anywhere, ensure both devices use the same <strong>Room Sync ID</strong>.
+        </p>
+
+        {/* Room ID Input */}
+        <div className="mb-4">
+          <label className="block text-xs font-bold text-slate-300 mb-1">
+            Room Sync ID (Channel Key)
+          </label>
+          <input
+            type="text"
+            value={localRoom}
+            onChange={(e) => setLocalRoom(e.target.value)}
+            placeholder="e.g. tyce-arch-secret-room"
+            className="w-full px-3 py-2 text-xs rounded-xl bg-slate-950 border border-cyan-900/40 text-cyan-300 font-mono focus:outline-none focus:border-cyan-400"
+          />
+        </div>
+
+        {/* Custom Firebase Config Input */}
+        <div className="mb-4">
+          <label className="block text-xs font-bold text-slate-300 mb-1">
+            Custom Firebase Web Config (Optional JSON)
+          </label>
+          <textarea
+            rows={4}
+            value={localConfig}
+            onChange={(e) => setLocalConfig(e.target.value)}
+            placeholder='{"apiKey": "AIza...", "authDomain": "...", "projectId": "..."}'
+            className="w-full px-3 py-2 text-[11px] font-mono rounded-xl bg-slate-950 border border-cyan-900/40 text-slate-300 focus:outline-none focus:border-cyan-400"
+          />
+          <p className="text-[10px] text-slate-500 mt-1">
+            Leave blank to use default real-time platform backend.
+          </p>
+        </div>
+
+        <div className="flex items-center justify-end space-x-2 pt-2 border-t border-slate-800">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 rounded-xl text-xs text-slate-400 hover:bg-slate-800"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => onSave(localRoom, localConfig)}
+            className="px-4 py-2 rounded-xl text-xs font-bold bg-gradient-to-r from-cyan-500 to-teal-400 text-slate-950 shadow-md shadow-cyan-500/20"
+          >
+            Save & Connect
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

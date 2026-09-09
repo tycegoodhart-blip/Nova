@@ -49,17 +49,17 @@
     }
   </style>
 </head>
-<body class="bg-slate-950 text-slate-100 h-full w-full overflow-hidden select-none relative">
+<body class="bg-[#1f1745] text-[#ced2e7] h-full w-full overflow-hidden select-none relative">
 
   <!-- Ambient Interactive Canvas Background -->
   <canvas id="bg-canvas"></canvas>
 
   <!-- Error Boundary Container -->
-  <div id="error-fallback" class="hidden fixed inset-0 z-50 bg-slate-950 flex flex-col items-center justify-center p-6 text-center">
+  <div id="error-fallback" class="hidden fixed inset-0 z-50 bg-[#1f1745] flex flex-col items-center justify-center p-6 text-center">
     <div class="text-4xl mb-3">⚡</div>
-    <h1 class="text-lg font-bold text-cyan-400 mb-1">Nova Connection Recovered</h1>
-    <p class="text-xs text-slate-400 max-w-sm mb-4">An unexpectedly slow render was prevented. Re-initializing interface...</p>
-    <button onclick="location.reload()" class="px-4 py-2 bg-gradient-to-r from-fuchsia-600 to-pink-500 text-white font-bold rounded-xl text-xs shadow-lg">
+    <h1 class="text-lg font-bold text-[#23c2ce] mb-1">Nova Connection Recovered</h1>
+    <p class="text-xs text-[#ced2e7] max-w-sm mb-4">An unexpectedly slow render was prevented. Re-initializing interface...</p>
+    <button onclick="location.reload()" class="px-4 py-2 bg-[#db3ab0] text-[#ced2e7] font-bold rounded-xl text-xs shadow-lg">
       Reload App
     </button>
   </div>
@@ -67,10 +67,10 @@
   <div id="app" class="relative z-10 h-full w-full flex flex-col font-sans transition-colors duration-300 overflow-hidden">
     <!-- Static loading fallback -->
     <div class="h-full w-full flex flex-col items-center justify-center space-y-3">
-      <div class="w-12 h-12 rounded-2xl bg-gradient-to-r from-fuchsia-600 to-cyan-500 flex items-center justify-center font-extrabold text-white text-xl animate-pulse">
+      <div class="w-12 h-12 rounded-2xl bg-[#db3ab0] flex items-center justify-center font-extrabold text-[#ced2e7] text-xl animate-pulse">
         N
       </div>
-      <p class="text-xs font-semibold text-slate-400 tracking-wider">CONNECTING CROSS-DEVICE RELAY...</p>
+      <p class="text-xs font-semibold text-[#ced2e7] tracking-wider">CONNECTING CROSS-DEVICE RELAY...</p>
     </div>
   </div>
 
@@ -104,8 +104,8 @@
         handle: '@tyce',
         avatar: '🚙',
         status: 'Online',
-        color: 'bg-gradient-to-r from-fuchsia-600 to-pink-500',
-        textColor: 'text-fuchsia-400'
+        color: 'bg-[#db3ab0]',
+        textColor: 'text-[#db3ab0]'
       },
       user2: {
         id: 'user2',
@@ -113,8 +113,8 @@
         handle: '@arch',
         avatar: '✏️',
         status: 'Active now',
-        color: 'bg-gradient-to-r from-cyan-500 to-teal-400',
-        textColor: 'text-cyan-400'
+        color: 'bg-[#23c2ce]',
+        textColor: 'text-[#23c2ce]'
       }
     };
 
@@ -332,7 +332,7 @@
           this.vy = (Math.random() - 0.5) * 0.4;
           this.radius = Math.random() * 2 + 1;
           this.alpha = Math.random() * 0.4 + 0.1;
-          this.color = Math.random() > 0.5 ? '#e879f9' : '#22d3ee';
+          this.color = Math.random() > 0.5 ? '#db3ab0' : '#22d3ee';
         }
         update() {
           this.x += this.vx;
@@ -363,7 +363,7 @@
               ctx.beginPath();
               ctx.moveTo(particles[i].x, particles[i].y);
               ctx.lineTo(particles[j].x, particles[j].y);
-              ctx.strokeStyle = state.isDarkMode ? 'rgba(34, 211, 238, 0.08)' : 'rgba(217, 70, 239, 0.08)';
+              ctx.strokeStyle = state.isDarkMode ? 'rgba(35, 194, 206, 0.12)' : 'rgba(219, 58, 176, 0.12)';
               ctx.lineWidth = 1 - dist / 120;
               ctx.stroke();
             }
@@ -600,186 +600,153 @@
         p.id !== state.currentUserId && p.name.toLowerCase().includes(state.searchQuery.toLowerCase())
       );
 
-      const themeBg = state.isDarkMode ? 'bg-slate-950/90 text-cyan-50' : 'bg-slate-100/90 text-slate-900';
-      const headerBg = state.isDarkMode ? 'bg-slate-900/90 border-cyan-950 text-slate-300' : 'bg-white/90 border-slate-200 text-slate-600';
-      const containerBg = state.isDarkMode ? 'bg-slate-900/85 border-cyan-900/40 shadow-cyan-950/50' : 'bg-white/90 border-slate-200 shadow-slate-300/50';
-      const sidebarBg = state.isDarkMode ? 'bg-slate-950/70 border-cyan-950' : 'bg-slate-50/70 border-slate-200';
+      const themeBg = 'bg-[#1f1745] text-[#ced2e7]';
+      const headerBg = 'bg-[#140E26]/90 text-[#ced2e7] border-none';
+      const containerBg = 'bg-[#140E26]/85 shadow-2xl border-none';
+      const sidebarBg = 'bg-[#140E26]/60 border-none';
 
       app.className = `h-full w-full flex flex-col font-sans transition-colors duration-300 overflow-hidden ${themeBg}`;
 
-      const syncStatusText = isMqttConnected || isCloudConnected
-        ? '🟢 Device-to-Device Live Sync'
-        : '🟡 Local Mode (Connecting Relay...)';
-
       app.innerHTML = `
         <!-- Top Header Bar -->
-        <header class="border-b px-3 sm:px-4 py-2.5 flex items-center justify-between text-xs glass-card z-30 shrink-0 pt-safe ${headerBg}">
+        <header class="px-3 sm:px-4 py-2.5 flex items-center justify-between text-xs glass-card z-30 shrink-0 pt-safe ${headerBg}">
           <div class="flex items-center space-x-2">
-            <span class="font-extrabold tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-fuchsia-400 to-pink-400 text-xl leading-none px-1">
+            <span class="font-extrabold tracking-wider text-[#db3ab0] text-xl leading-none px-1">
               NOVA
             </span>
-            <button onclick="copyRoomCode()" class="flex items-center space-x-1 text-amber-300 hover:text-amber-200 font-bold bg-amber-950/80 border border-amber-800/80 px-2.5 py-1 rounded-full transition-all active:scale-95 text-[10px]" title="Click to copy Room Code">
-              <span>⚡ Room: <strong class="font-mono text-cyan-300">${state.roomId}</strong></span>
-              <span>${state.copySuccess ? '✓ Copied!' : '📋'}</span>
+            <button onclick="copyRoomCode()" class="text-[#ced2e7] hover:text-[#23c2ce] font-medium transition-all text-xs" title="Click to copy Room Code">
+              Room Code: <strong class="font-mono text-[#23c2ce]">${state.roomId}</strong>${state.copySuccess ? ' <span class="text-[#23c2ce] font-normal">(Copied!)</span>' : ''}
             </button>
-            <span class="hidden sm:flex items-center text-[10px] px-2 py-0.5 rounded-full bg-emerald-950/80 text-emerald-400 border border-emerald-800/60 font-medium">
-              ${syncStatusText}
-            </span>
           </div>
 
           <div class="flex items-center space-x-1.5 sm:space-x-2">
             <!-- Profile Switcher for this device -->
-            <div class="flex items-center space-x-1 bg-slate-800/60 p-1 rounded-xl border border-cyan-900/30">
-              ${Object.values(PROFILES).map(p => {
-                const isSelf = p.id === state.currentUserId;
-                const activeBadge = p.id === 'user1'
-                  ? 'bg-gradient-to-r from-fuchsia-600 to-pink-500 text-white font-bold shadow-md shadow-pink-500/20'
-                  : 'bg-gradient-to-r from-cyan-500 to-teal-400 text-slate-950 font-bold shadow-md shadow-cyan-500/20';
-                return `
-                  <button onclick="switchUser('${p.id}')" class="flex items-center space-x-1 px-2.5 py-1 rounded-lg text-xs transition-all active:scale-95 ${isSelf ? activeBadge : 'text-slate-400 hover:text-slate-200'}" title="Set this device active profile to ${p.name}">
-                    <span class="text-sm">${p.avatar}</span>
-                    <span class="font-semibold text-xs">${p.name}</span>
-                  </button>
-                `;
-              }).join('')}
-            </div>
+            ${Object.values(PROFILES).map(p => {
+              const isSelf = p.id === state.currentUserId;
+              const activeBadge = p.id === 'user1'
+                ? 'bg-[#db3ab0] text-[#ced2e7] font-bold shadow-md shadow-[#db3ab0]/20'
+                : 'bg-[#23c2ce] text-[#ced2e7] font-bold shadow-md shadow-[#23c2ce]/20';
+              return `
+                <button onclick="switchUser('${p.id}')" class="flex items-center space-x-1 px-2.5 py-1 rounded-lg text-xs transition-all active:scale-95 ${isSelf ? activeBadge : 'bg-[#0e0b21] text-[#ced2e7] hover:text-[#23c2ce]'}" title="Set this device active profile to ${p.name}">
+                  <span class="text-sm">${p.avatar}</span>
+                  <span class="font-semibold text-xs">${p.name}</span>
+                </button>
+              `;
+            }).join('')}
 
-            <button onclick="toggleSound()" class="p-1.5 rounded-lg text-slate-400 hover:text-cyan-300 active:scale-95" title="Toggle Sound">
+            <button onclick="toggleSound()" class="p-1.5 rounded-lg text-[#ced2e7] hover:text-[#23c2ce] active:scale-95" title="Toggle Sound">
               ${state.soundEnabled ? '🔈' : '🔇'}
             </button>
-            <button onclick="openSettings()" class="p-1.5 rounded-lg text-slate-400 hover:text-cyan-300 active:scale-95" title="Room & Sync Settings">
+            <button onclick="openSettings()" class="p-1.5 rounded-lg text-[#ced2e7] hover:text-[#23c2ce] active:scale-95" title="Room & Sync Settings">
               ⚙️
             </button>
-            <button onclick="toggleTheme()" class="p-1.5 rounded-lg text-slate-400 hover:text-cyan-300 active:scale-95" title="Toggle Theme">
+            <button onclick="toggleTheme()" class="p-1.5 rounded-lg text-[#ced2e7] hover:text-[#23c2ce] active:scale-95" title="Toggle Theme">
               ${state.isDarkMode ? '🌙' : '☀️'}
             </button>
           </div>
         </header>
 
         <!-- Main Body Container -->
-        <div class="flex-1 w-full max-w-6xl mx-auto p-0 sm:p-3 md:p-4 flex overflow-hidden">
-          <div class="w-full h-full sm:rounded-3xl border flex overflow-hidden shadow-2xl glass-card transition-all ${containerBg}">
-
-            <!-- Sidebar -->
-            <div class="w-full sm:w-80 md:w-88 border-r flex flex-col shrink-0 ${state.showMobileSidebar ? 'flex' : 'hidden sm:flex'} ${sidebarBg}">
-              <div class="p-3.5 border-b border-cyan-950/30 flex items-center justify-between">
-                <div class="flex items-center space-x-2.5">
-                  <span class="text-2xl">${currentUser.avatar}</span>
-                  <div>
-                    <h2 class="font-bold text-sm leading-tight">${currentUser.name}</h2>
-                    <p class="text-[11px] font-medium ${currentUser.textColor}">This Device Active Profile</p>
-                  </div>
+        <div class="flex-1 w-full max-w-6xl mx-auto p-2 sm:p-3 md:p-4 flex gap-3 sm:gap-4 overflow-hidden">
+          
+          <!-- Contacts / Sidebar Container -->
+          <div class="w-full sm:w-80 md:w-88 flex flex-col shrink-0 h-full rounded-2xl sm:rounded-3xl overflow-hidden shadow-2xl glass-card transition-all ${state.showMobileSidebar ? 'flex' : 'hidden sm:flex'} ${containerBg}">
+            <div class="p-3.5 flex items-center justify-between bg-[#0e0b21] rounded-t-2xl sm:rounded-t-3xl border-b border-[#0e0b21]/50">
+              <div class="flex items-center space-x-2.5">
+                <span class="text-2xl">${currentUser.avatar}</span>
+                <div>
+                  <h2 class="font-bold text-sm leading-tight">${currentUser.name}</h2>
+                  <p class="text-[11px] font-medium ${currentUser.textColor}">Current Profile</p>
                 </div>
-              </div>
-
-              <div class="p-2.5">
-                <input
-                  type="text"
-                  placeholder="Search contacts..."
-                  value="${state.searchQuery}"
-                  oninput="updateSearch(this.value)"
-                  class="w-full px-3 py-2 rounded-xl text-xs border focus:outline-none ${state.isDarkMode ? 'bg-slate-900 border-cyan-900/30 text-cyan-100' : 'bg-white border-slate-200'}"
-                />
-              </div>
-
-              <div class="flex-1 overflow-y-auto px-2 space-y-1 smooth-scroll">
-                ${filteredContacts.map(contact => {
-                  const isSelected = contact.id === state.activeChatUserId;
-                  const lastMsg = state.messages
-                    .filter(m => (m.senderId === state.currentUserId && m.receiverId === contact.id) || (m.senderId === contact.id && m.receiverId === state.currentUserId))
-                    .pop();
-                  const contactHighlight = contact.id === 'user1'
-                    ? 'bg-gradient-to-r from-fuchsia-500/20 to-pink-500/10 border-fuchsia-500/40 text-fuchsia-100'
-                    : 'bg-gradient-to-r from-cyan-500/20 to-teal-500/10 border-cyan-500/40 text-cyan-100';
-
-                  return `
-                    <button onclick="selectContact('${contact.id}')" class="w-full p-3 rounded-2xl flex items-center space-x-3 text-left border transition-all active:scale-98 ${isSelected ? contactHighlight : state.isDarkMode ? 'border-transparent hover:bg-slate-900/60 text-slate-300' : 'border-transparent hover:bg-slate-200/60 text-slate-800'}">
-                      <div class="w-11 h-11 rounded-2xl ${contact.color} flex items-center justify-center text-xl shadow-md shrink-0">
-                        ${contact.avatar}
-                      </div>
-                      <div class="flex-1 min-w-0">
-                        <div class="flex items-center justify-between mb-0.5">
-                          <span class="font-semibold text-xs truncate">${contact.name}</span>
-                        </div>
-                        <p class="text-xs text-slate-400 truncate">
-                          ${lastMsg ? (lastMsg.mediaUrl ? '📷 Attachment' : lastMsg.text) : '<span class="italic text-cyan-400">Start thread</span>'}
-                        </p>
-                      </div>
-                    </button>
-                  `;
-                }).join('')}
-              </div>
-
-              <!-- Quick Room Copy Footer -->
-              <div class="p-3 border-t border-cyan-950/30 text-[11px] text-slate-400 flex items-center justify-between">
-                <span>Pair Code:</span>
-                <button onclick="copyRoomCode()" class="font-mono text-cyan-300 font-bold bg-slate-950 px-2 py-0.5 rounded border border-cyan-900/40 hover:border-cyan-400 transition-colors">
-                  ${state.roomId} 📋
-                </button>
               </div>
             </div>
 
-            <div class="flex-1 flex flex-col h-full ${!state.showMobileSidebar ? 'flex' : 'hidden sm:flex'}">
-              <!-- Chat Header -->
-              <div class="px-4 py-3 border-b flex items-center justify-between shrink-0 ${state.isDarkMode ? 'bg-slate-950/40 border-cyan-950' : 'bg-slate-50 border-slate-200'}">
-                <div class="flex items-center space-x-3">
-                  <button onclick="showSidebar()" class="sm:hidden text-cyan-400 font-bold text-xs p-1">◀ Contacts</button>
-                  <div class="w-9 h-9 rounded-xl ${activePartner.color} flex items-center justify-center text-lg shadow-sm">
-                    ${activePartner.avatar}
-                  </div>
-                  <div>
-                    <h2 class="font-bold text-sm leading-tight">${activePartner.name}</h2>
-                    <p class="text-[11px] ${activePartner.textColor}">${activePartner.handle}</p>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Messages Feed -->
-              <div id="message-feed" class="flex-1 p-3 sm:p-4 overflow-y-auto space-y-3 smooth-scroll ${state.isDarkMode ? 'bg-slate-950/20' : 'bg-slate-50/30'}">
-                ${activeMsgs.length === 0 ? `
-                  <div class="h-full flex flex-col items-center justify-center text-center p-6 space-y-2">
-                    <div class="text-4xl mb-1">${activePartner.avatar}</div>
-                    <h3 class="font-bold text-cyan-200 text-sm">Messaging ${activePartner.name}</h3>
-                    <p class="text-xs text-slate-400 max-w-sm">
-                      Enter Room Code <strong class="text-amber-300 font-mono">${state.roomId}</strong> on your other device to connect live instantly.
-                    </p>
-                  </div>
-                ` : activeMsgs.map(msg => renderMessageBubble(msg)).join('')}
-              </div>
-
-              <div class="p-2.5 sm:p-3 border-t shrink-0 pb-safe ${state.isDarkMode ? 'bg-slate-950/80 border-cyan-950' : 'bg-white border-slate-200'}">
-                ${state.showImageInput ? `
-                  <div class="p-2 mb-2 bg-slate-900 border border-cyan-900/40 rounded-2xl flex items-center space-x-2">
-                    <input id="img-url-input" type="url" placeholder="Paste image URL..." class="flex-1 px-3 py-1.5 text-xs bg-slate-950 rounded-xl border border-slate-800 text-cyan-100 focus:outline-none" />
-                    <button onclick="attachImageFromUrl()" class="px-3 py-1 bg-cyan-500 text-slate-950 font-bold rounded-xl text-xs">Attach</button>
-                  </div>
-                ` : ''}
-
-                <form onsubmit="handleSendSubmit(event)" class="flex items-center space-x-1.5 sm:space-x-2">
-                  <label class="cursor-pointer p-2 rounded-xl text-slate-400 hover:text-cyan-300 text-lg transition-transform active:scale-95" title="Attach Image File">
-                    📎
-                    <input type="file" accept="image/*" onchange="handleFileUpload(event)" class="hidden" />
-                  </label>
-
-                  <button type="button" onclick="toggleImageInput()" class="p-2 rounded-xl text-slate-400 hover:text-cyan-300 text-base transition-transform active:scale-95" title="Attach Image Link">
-                    🌐
-                  </button>
-
-                  <input
-                    id="message-input"
-                    type="text"
-                    placeholder="Message to ${activePartner.name}..."
-                    class="flex-1 px-4 py-2.5 rounded-full text-xs sm:text-sm focus:outline-none transition-all ${state.isDarkMode ? 'bg-slate-900 border border-slate-800 text-cyan-50 placeholder-slate-500 focus:border-cyan-500/60' : 'bg-slate-100 border border-slate-200 text-slate-900 placeholder-slate-400 focus:border-cyan-50'}"
-                  />
-
-                  <button type="submit" class="px-4 py-2.5 rounded-full text-xs font-bold transition-all ${state.currentUserId === 'user1' ? 'bg-gradient-to-r from-fuchsia-600 to-pink-500 text-white shadow-md shadow-pink-500/20 active:scale-95' : 'bg-gradient-to-r from-cyan-500 to-teal-400 text-slate-950 shadow-md shadow-cyan-500/20 active:scale-95'}">
-                    Send
-                  </button>
-                </form>
-              </div>
+            <div class="p-2.5">
+              <input
+                type="text"
+                placeholder="Search contacts..."
+                value="${state.searchQuery}"
+                oninput="updateSearch(this.value)"
+                class="w-full px-3 py-2 rounded-xl text-xs focus:outline-none bg-[#0e0b21] text-[#23c2ce] placeholder-[#ced2e7] shadow-inner"
+              />
             </div>
 
+            <div class="flex-1 overflow-y-auto px-2 space-y-1 smooth-scroll pb-3">
+              ${filteredContacts.map(contact => {
+                const isSelected = contact.id === state.activeChatUserId;
+                const lastMsg = state.messages
+                  .filter(m => (m.senderId === state.currentUserId && m.receiverId === contact.id) || (m.senderId === contact.id && m.receiverId === currentUserId))
+                  .pop();
+
+                return `
+                  <button onclick="selectContact('${contact.id}')" class="w-full p-3 rounded-2xl flex items-center space-x-3 text-left transition-all active:scale-98 bg-[#0e0b21] text-[#ced2e7]">
+                    <div class="w-11 h-11 rounded-2xl ${contact.color} flex items-center justify-center text-xl shadow-md shrink-0">
+                      ${contact.avatar}
+                    </div>
+                    <div class="flex-1 min-w-0">
+                      <div class="flex items-center justify-between mb-0.5">
+                        <span class="font-semibold text-xs truncate text-[#ced2e7]">${contact.name}</span>
+                      </div>
+                      <p class="text-xs ${contact.textColor} truncate">
+                        ${lastMsg ? (lastMsg.mediaUrl ? '📷 Attachment' : lastMsg.text) : '<span class="italic">No messages</span>'}
+                      </p>
+                    </div>
+                  </button>
+                `;
+              }).join('')}
+            </div>
           </div>
+
+          <!-- Active Messaging Area Container -->
+          <div class="flex-1 flex flex-col h-full rounded-2xl sm:rounded-3xl overflow-hidden shadow-2xl glass-card transition-all ${!state.showMobileSidebar ? 'flex' : 'hidden sm:flex'} ${containerBg}">
+            <!-- Chat Header -->
+            <div class="px-4 py-3 flex items-center justify-between shrink-0 bg-[#0e0b21] rounded-t-2xl sm:rounded-t-3xl border-b border-[#0e0b21]/50">
+              <div class="flex items-center space-x-3">
+                <button onclick="showSidebar()" class="sm:hidden text-[#23c2ce] font-bold text-xs p-1">◀ Contacts</button>
+                <div class="w-9 h-9 rounded-xl ${activePartner.color} flex items-center justify-center text-lg shadow-sm">
+                  ${activePartner.avatar}
+                </div>
+                <div>
+                  <h2 class="font-bold text-sm leading-tight">${activePartner.name}</h2>
+                  <p class="text-[11px] font-medium ${activePartner.textColor}">${activePartner.handle}</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Messages Feed -->
+            <div id="message-feed" class="flex-1 p-3 sm:p-4 overflow-y-auto space-y-3 smooth-scroll bg-[#140E26]/30">
+              ${activeMsgs.length === 0 ? `
+                <div class="h-full flex flex-col items-center justify-center text-center p-6 space-y-2">
+                  <div class="text-4xl mb-1">${activePartner.avatar}</div>
+                  <h3 class="font-bold text-[#23c2ce] text-sm">Messaging ${activePartner.name}</h3>
+                  <p class="text-xs text-[#ced2e7] max-w-sm">
+                    Enter Room Code <strong class="text-[#23c2ce] font-mono">${state.roomId}</strong> on your other device to connect live instantly.
+                  </p>
+                </div>
+              ` : activeMsgs.map(msg => renderMessageBubble(msg)).join('')}
+            </div>
+
+            <div class="p-2.5 sm:p-3 shrink-0 pb-safe bg-[#0e0b21] rounded-b-2xl sm:rounded-b-3xl">
+              <form onsubmit="handleSendSubmit(event)" class="flex items-center space-x-1.5 sm:space-x-2">
+                <label class="cursor-pointer p-2 rounded-xl text-[#ced2e7] hover:text-[#23c2ce] text-lg transition-transform active:scale-95" title="Attach Image File">
+                  📎
+                  <input type="file" accept="image/*" onchange="handleFileUpload(event)" class="hidden" />
+                </label>
+
+                <input
+                  id="message-input"
+                  type="text"
+                  placeholder="Message to ${activePartner.name}..."
+                  class="flex-1 px-4 py-2.5 rounded-full text-xs sm:text-sm focus:outline-none transition-all bg-[#140E26] text-[#ced2e7] placeholder-[#ced2e7]/60 shadow-inner"
+                />
+
+                <button type="submit" class="px-4 py-2.5 rounded-full text-xs font-bold transition-all ${state.currentUserId === 'user1' ? 'bg-[#db3ab0] text-[#ced2e7] shadow-md shadow-[#db3ab0]/20 active:scale-95' : 'bg-[#23c2ce] text-[#ced2e7] shadow-md shadow-[#23c2ce]/20 active:scale-95'}">
+                  Send
+                </button>
+              </form>
+            </div>
+          </div>
+
         </div>
 
         <!-- Settings Modal -->
@@ -792,8 +759,8 @@
       const singleEmoji = isSingleEmoji(msg.text) && !msg.mediaUrl;
       const formattedTime = new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       const myGradient = msg.senderId === 'user1'
-        ? 'bg-gradient-to-r from-fuchsia-600 to-pink-500 text-white'
-        : 'bg-gradient-to-r from-cyan-500 to-teal-400 text-slate-950';
+        ? 'bg-[#db3ab0] text-[#ced2e7]'
+        : 'bg-[#23c2ce] text-[#ced2e7]';
 
       const showPicker = state.selectedPickerMsgId === msg.id;
       const reactions = msg.reactions || {};
@@ -801,18 +768,17 @@
       return `
         <div class="group relative flex flex-col my-1 ${isMe ? 'items-end' : 'items-start'}">
           ${showPicker ? `
-            <div class="absolute -top-9 ${isMe ? 'right-2' : 'left-2'} bg-slate-900/95 border border-cyan-900/60 backdrop-blur-md rounded-full px-2.5 py-1 flex items-center space-x-1.5 shadow-xl z-20">
+            <div class="absolute -top-9 ${isMe ? 'right-2' : 'left-2'} bg-[#140E26] backdrop-blur-md rounded-full px-2.5 py-1 flex items-center space-x-1.5 shadow-xl z-20">
               ${REACTION_EMOJIS.map(emoji => {
                 const hasReacted = (reactions[emoji] || []).includes(state.currentUserId);
                 return `
-                  <button onclick="toggleReaction('${msg.id}', '${emoji}')" class="text-sm p-1 rounded-full transition-transform active:scale-125 ${hasReacted ? 'bg-cyan-950/80 ring-1 ring-cyan-400' : 'hover:bg-slate-800/80'}">
+                  <button onclick="toggleReaction('${msg.id}', '${emoji}')" class="text-sm p-1 rounded-full transition-transform active:scale-125 ${hasReacted ? 'bg-[#1f1745]' : 'hover:bg-[#1f1745]'}">
                     ${emoji}
                   </button>
                 `;
               }).join('')}
               ${isMe ? `
-                <div class="w-px h-3 bg-slate-700/60 mx-1"></div>
-                <button onclick="deleteMessage('${msg.id}')" class="text-slate-400 hover:text-red-400 text-xs p-1" title="Delete message">🗑️</button>
+                <button onclick="deleteMessage('${msg.id}')" class="text-[#ced2e7] hover:text-red-400 text-xs p-1 ml-1" title="Delete message">🗑️</button>
               ` : ''}
             </div>
           ` : ''}
@@ -822,14 +788,14 @@
               ${msg.text}
             </div>
           ` : `
-            <div onclick="togglePicker('${msg.id}')" class="cursor-pointer transition-all max-w-[85%] sm:max-w-[75%] px-3.5 py-2.5 rounded-2xl text-xs sm:text-sm shadow-sm ${isMe ? `${myGradient} font-medium` : state.isDarkMode ? 'bg-slate-800 text-cyan-50' : 'bg-slate-200 text-slate-900'}">
+            <div onclick="togglePicker('${msg.id}')" class="cursor-pointer transition-all max-w-[85%] sm:max-w-[75%] px-3.5 py-2.5 rounded-2xl text-xs sm:text-sm shadow-sm ${isMe ? `${myGradient} font-medium` : 'bg-[#140E26] text-[#ced2e7]'}">
               ${msg.mediaUrl ? `
-                <div class="mb-2 overflow-hidden rounded-xl border border-black/10 max-w-xs">
+                <div class="mb-2 overflow-hidden rounded-xl max-w-xs">
                   <img src="${msg.mediaUrl}" alt="Attachment" class="max-h-56 w-full object-cover rounded-lg" onerror="this.style.display='none'" />
                 </div>
               ` : ''}
               ${msg.text ? `<p class="leading-relaxed break-words">${msg.text}</p>` : ''}
-              <div class="mt-1 text-[9px] text-right ${isMe ? (msg.senderId === 'user1' ? 'text-white/80' : 'text-slate-900/70') : 'text-slate-400'}">
+              <div class="mt-1 text-[9px] text-right ${isMe ? 'text-[#ced2e7]/80' : 'text-[#ced2e7]/60'}">
                 ${formattedTime}
               </div>
             </div>
@@ -842,10 +808,10 @@
                 const hasIReacted = users.includes(state.currentUserId);
                 const colorUserId = hasIReacted ? state.currentUserId : users[0];
                 const userProfile = PROFILES[colorUserId];
-                const badgeColor = userProfile ? userProfile.color : 'bg-slate-800';
-                const textStyle = colorUserId === 'user1' ? 'text-white' : 'text-slate-950';
+                const badgeColor = userProfile ? userProfile.color : 'bg-[#140E26]';
+                const textStyle = 'text-[#ced2e7]';
                 return `
-                  <button onclick="toggleReaction('${msg.id}', '${emoji}')" class="flex items-center space-x-1 text-[10px] px-2 py-0.5 rounded-full border border-black/10 font-bold shadow-sm ${badgeColor} ${textStyle}">
+                  <button onclick="toggleReaction('${msg.id}', '${emoji}')" class="flex items-center space-x-1 text-[10px] px-2 py-0.5 rounded-full font-bold shadow-sm ${badgeColor} ${textStyle}">
                     <span>${emoji}</span>
                     <span class="text-[9px] font-mono">${users.length}</span>
                   </button>
@@ -859,26 +825,26 @@
 
     function renderSettingsModal() {
       return `
-        <div class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div class="w-full max-w-md rounded-3xl p-5 sm:p-6 border shadow-2xl ${state.isDarkMode ? 'bg-slate-900 border-cyan-900/50 text-cyan-50' : 'bg-white border-slate-300 text-slate-900'}">
+        <div class="fixed inset-0 bg-[#ced2e7]/20 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div class="w-full max-w-md rounded-3xl p-5 sm:p-6 shadow-2xl bg-[#140E26] text-[#ced2e7]">
             <h3 class="font-extrabold text-base mb-1">Cross-Device Pairing Settings</h3>
-            <p class="text-xs text-slate-400 mb-4">
+            <p class="text-xs text-[#ced2e7] mb-4">
               Enter the exact same <strong>Room Code</strong> on your Phone, iPad, or laptop to sync messages live in real-time.
             </p>
 
             <div class="mb-4">
-              <label class="block text-xs font-bold text-slate-300 mb-1">Room Sync Code</label>
+              <label class="block text-xs font-bold text-[#ced2e7] mb-1">Room Sync Code</label>
               <div class="flex items-center space-x-2">
-                <input id="settings-room-input" type="text" value="${state.roomId}" class="flex-1 px-3 py-2 text-xs rounded-xl bg-slate-950 border border-cyan-900/40 text-cyan-300 font-mono focus:outline-none" />
-                <button onclick="copyRoomCode()" class="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-cyan-300 text-xs font-bold rounded-xl border border-slate-700">
+                <input id="settings-room-input" type="text" value="${state.roomId}" class="flex-1 px-3 py-2 text-xs rounded-xl bg-[#140E26] text-[#23c2ce] font-mono focus:outline-none shadow-inner" />
+                <button onclick="copyRoomCode()" class="px-3 py-2 bg-[#140E26] hover:bg-[#1f1745] text-[#23c2ce] text-xs font-bold rounded-xl shadow-sm">
                   Copy
                 </button>
               </div>
             </div>
 
-            <div class="flex items-center justify-end space-x-2 pt-2 border-t border-slate-800">
-              <button onclick="closeSettings()" class="px-4 py-2 rounded-xl text-xs text-slate-400">Cancel</button>
-              <button onclick="saveSettings()" class="px-4 py-2 rounded-xl text-xs font-bold bg-gradient-to-r from-fuchsia-600 to-pink-500 text-white shadow-md">
+            <div class="flex items-center justify-end space-x-2 pt-2">
+              <button onclick="closeSettings()" class="px-4 py-2 rounded-xl text-xs text-[#ced2e7]">Cancel</button>
+              <button onclick="saveSettings()" class="px-4 py-2 rounded-xl text-xs font-bold bg-[#db3ab0] text-[#ced2e7] shadow-md">
                 Save & Connect Room
               </button>
             </div>

@@ -72,7 +72,11 @@
     </div>
   </div>
 
-  <script>
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, doc, setDoc, deleteDoc, collection, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
     // Error Safeguard to prevent blank screens
     window.onerror = function(msg, url, lineNo, columnNo, error) {
       console.error('Nova App Guarded Error:', msg, error);
@@ -120,8 +124,83 @@
       roomId: localStorage.getItem('nova_room_id') || 'nova-shared-room'
     };
 
+    let db = null;
+    let auth = null;
+    let isCloudConnected = false;
     let audioCtxInstance = null;
-    let broadcastChannel = null;
+
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'nova-messaging-app';
+    const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+
+    async function initFirebaseSync() {
+      if (!firebaseConfig) {
+        console.warn("No Firebase config found. Operating in local mode.");
+        loadMessagesFromStorage();
+        return;
+      }
+      try {
+        const app = initializeApp(firebaseConfig);
+        auth = getAuth(app);
+        db = getFirestore(app);
+
+        const initialToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        if (initialToken) {
+          await signInWithCustomToken(auth, initialToken);
+        } else {
+          await signInAnonymously(auth);
+        }
+
+        if (auth.currentUser) {
+          isCloudConnected = true;
+          subscribeToCloudMessages();
+        }
+      } catch (err) {
+        console.error("Firebase init failed:", err);
+        isCloudConnected = false;
+        loadMessagesFromStorage();
+      }
+    }
+
+    function subscribeToCloudMessages() {
+      if (!db || !auth || !auth.currentUser) return;
+      
+      // Strict Path Rule: /artifacts/{appId}/public/data/messages
+      const messagesCol = collection(db, 'artifacts', appId, 'public', 'data', 'messages');
+
+      onSnapshot(
+        messagesCol,
+        (snapshot) => {
+          const loaded = [];
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data();
+            if (data && data.roomId === state.roomId) {
+              loaded.push(data);
+            }
+          });
+
+          // Sort in memory by timestamp
+          loaded.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+
+          const prevCount = state.messages.length;
+          state.messages = loaded;
+
+          if (state.messages.length > prevCount && prevCount > 0) {
+            const newest = state.messages[state.messages.length - 1];
+            if (newest.senderId !== state.currentUserId) {
+              playNotificationSound();
+            }
+          }
+
+          render();
+          scrollToBottom();
+        },
+        (error) => {
+          console.error("Firestore snapshot error:", error);
+          isCloudConnected = false;
+          render();
+        }
+      );
+    }
 
     // Interactive HTML5 Background Canvas System
     function initBackgroundCanvas() {
@@ -274,16 +353,7 @@
         if (stored) {
           state.messages = JSON.parse(stored);
         } else {
-          state.messages = [
-            {
-              id: 'init_1',
-              senderId: 'user2',
-              receiverId: 'user1',
-              text: 'Hey Tyce! Nova real-time sync is working on this screen canvas! 🚀',
-              timestamp: Date.now() - 60000,
-              reactions: { '👍': ['user1'] }
-            }
-          ];
+          state.messages = [];
         }
       } catch (e) {
         state.messages = [];
@@ -294,41 +364,15 @@
       try {
         localStorage.setItem(`nova_msgs_${state.roomId}`, JSON.stringify(state.messages));
       } catch (e) {}
-
-      if (broadcastChannel) {
-        try {
-          broadcastChannel.postMessage({ type: 'SYNC', msgs: state.messages });
-        } catch (e) {}
-      }
     }
 
-    function setupBroadcastChannel() {
-      if (broadcastChannel) {
-        try { broadcastChannel.close(); } catch (e) {}
-      }
-      if ('BroadcastChannel' in window) {
-        broadcastChannel = new BroadcastChannel(`nova_bc_${state.roomId}`);
-        broadcastChannel.onmessage = (event) => {
-          if (event.data && event.data.type === 'SYNC' && Array.isArray(event.data.msgs)) {
-            const prevCount = state.messages.length;
-            state.messages = event.data.msgs;
-            if (state.messages.length > prevCount) {
-              const newest = state.messages[state.messages.length - 1];
-              if (newest.senderId !== state.currentUserId) {
-                playNotificationSound();
-              }
-            }
-            render();
-          }
-        };
-      }
-    }
-
-    function sendMessage(text, mediaUrl = null) {
+    async function sendMessage(text, mediaUrl = null) {
       if (!text.trim() && !mediaUrl) return;
 
+      const msgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4);
       const msg = {
-        id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
+        id: msgId,
+        roomId: state.roomId,
         senderId: state.currentUserId,
         receiverId: state.activeChatUserId,
         text: text.trim(),
@@ -337,36 +381,72 @@
         reactions: {}
       };
 
-      state.messages.push(msg);
-      saveAndSyncMessages();
-      render();
-      scrollToBottom();
+      if (isCloudConnected && db && auth?.currentUser) {
+        try {
+          const msgDoc = doc(db, 'artifacts', appId, 'public', 'data', 'messages', msgId);
+          await setDoc(msgDoc, msg);
+        } catch (e) {
+          console.error("Error sending message to cloud:", e);
+        }
+      } else {
+        state.messages.push(msg);
+        saveAndSyncMessages();
+        render();
+        scrollToBottom();
+      }
     }
 
-    function deleteMessage(msgId) {
-      state.messages = state.messages.filter(m => m.id !== msgId);
+    async function deleteMessage(msgId) {
       state.selectedPickerMsgId = null;
-      saveAndSyncMessages();
-      render();
+      if (isCloudConnected && db && auth?.currentUser) {
+        try {
+          const msgDoc = doc(db, 'artifacts', appId, 'public', 'data', 'messages', msgId);
+          await deleteDoc(msgDoc);
+        } catch (e) {
+          console.error("Error deleting cloud message:", e);
+        }
+      } else {
+        state.messages = state.messages.filter(m => m.id !== msgId);
+        saveAndSyncMessages();
+        render();
+      }
     }
 
-    function toggleReaction(msgId, emoji) {
+    async function toggleReaction(msgId, emoji) {
       const msg = state.messages.find(m => m.id === msgId);
       if (!msg) return;
 
       if (!msg.reactions) msg.reactions = {};
       const currentUsers = msg.reactions[emoji] || [];
 
+      let newUsers;
       if (currentUsers.includes(state.currentUserId)) {
-        msg.reactions[emoji] = currentUsers.filter(u => u !== state.currentUserId);
-        if (msg.reactions[emoji].length === 0) delete msg.reactions[emoji];
+        newUsers = currentUsers.filter(u => u !== state.currentUserId);
       } else {
-        msg.reactions[emoji] = [...currentUsers, state.currentUserId];
+        newUsers = [...currentUsers, state.currentUserId];
+      }
+
+      const updatedReactions = { ...msg.reactions };
+      if (newUsers.length === 0) {
+        delete updatedReactions[emoji];
+      } else {
+        updatedReactions[emoji] = newUsers;
       }
 
       state.selectedPickerMsgId = null;
-      saveAndSyncMessages();
-      render();
+
+      if (isCloudConnected && db && auth?.currentUser) {
+        try {
+          const msgDoc = doc(db, 'artifacts', appId, 'public', 'data', 'messages', msgId);
+          await setDoc(msgDoc, { ...msg, reactions: updatedReactions });
+        } catch (e) {
+          console.error("Error updating reaction on cloud:", e);
+        }
+      } else {
+        msg.reactions = updatedReactions;
+        saveAndSyncMessages();
+        render();
+      }
     }
 
     function scrollToBottom() {
@@ -409,6 +489,9 @@
             <button onclick="openSettings()" class="hidden sm:flex items-center text-amber-400 hover:text-amber-300 font-medium bg-amber-950/80 border border-amber-800/80 px-2 py-0.5 rounded-full transition-colors cursor-pointer text-[10px]">
               ⚡ Room: ${state.roomId}
             </button>
+            <span class="flex items-center text-[10px] px-2 py-0.5 rounded-full ${isCloudConnected ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-800/60' : 'bg-amber-950/80 text-amber-400 border border-amber-800/60'}">
+              ${isCloudConnected ? '🟢 Multi-Device Live Sync' : '🟡 Local Mode'}
+            </span>
           </div>
 
           <div class="flex items-center space-x-1.5 sm:space-x-2">
@@ -451,7 +534,7 @@
                   <span class="text-2xl">${currentUser.avatar}</span>
                   <div>
                     <h2 class="font-bold text-sm leading-tight">${currentUser.name}</h2>
-                    <p class="text-[11px] font-medium ${currentUser.textColor}">Active Profile</p>
+                    <p class="text-[11px] font-medium ${currentUser.textColor}">Active Profile on this Device</p>
                   </div>
                 </div>
               </div>
@@ -516,7 +599,7 @@
                   <div class="h-full flex flex-col items-center justify-center text-center p-6 space-y-2">
                     <div class="text-4xl mb-1">${activePartner.avatar}</div>
                     <h3 class="font-bold text-cyan-200 text-sm">Start Messaging ${activePartner.name}</h3>
-                    <p class="text-xs text-slate-400 max-w-xs">Messages synchronize live across tabs and devices instantly.</p>
+                    <p class="text-xs text-slate-400 max-w-xs">Messages synchronize live across tabs, phones, and iPads instantly.</p>
                   </div>
                 ` : activeMsgs.map(msg => renderMessageBubble(msg)).join('')}
               </div>
@@ -543,7 +626,7 @@
                     id="message-input"
                     type="text"
                     placeholder="Message to ${activePartner.name}..."
-                    class="flex-1 px-4 py-2.5 rounded-full text-xs sm:text-sm focus:outline-none transition-all ${state.isDarkMode ? 'bg-slate-900 border border-slate-800 text-cyan-50 placeholder-slate-500 focus:border-cyan-500/60' : 'bg-slate-100 border border-slate-200 text-slate-900 placeholder-slate-400 focus:border-cyan-500'}"
+                    class="flex-1 px-4 py-2.5 rounded-full text-xs sm:text-sm focus:outline-none transition-all ${state.isDarkMode ? 'bg-slate-900 border border-slate-800 text-cyan-50 placeholder-slate-500 focus:border-cyan-500/60' : 'bg-slate-100 border border-slate-200 text-slate-900 placeholder-slate-400 focus:border-cyan-50'}"
                   />
 
                   <button type="submit" class="px-4 py-2.5 rounded-full text-xs font-bold transition-all ${state.currentUserId === 'user1' ? 'bg-gradient-to-r from-fuchsia-600 to-pink-500 text-white shadow-md shadow-pink-500/20 active:scale-95' : 'bg-gradient-to-r from-cyan-500 to-teal-400 text-slate-950 shadow-md shadow-cyan-500/20 active:scale-95'}">
@@ -637,7 +720,7 @@
           <div class="w-full max-w-md rounded-3xl p-5 sm:p-6 border shadow-2xl ${state.isDarkMode ? 'bg-slate-900 border-cyan-900/50 text-cyan-50' : 'bg-white border-slate-300 text-slate-900'}">
             <h3 class="font-extrabold text-base mb-2">Sync & Room Settings</h3>
             <p class="text-xs text-slate-400 mb-4">
-              Enter the same <strong>Room Sync Code</strong> on both windows or devices to pair your live conversation.
+              Enter the same <strong>Room Sync Code</strong> on both your phone and iPad to connect your live conversation.
             </p>
 
             <div class="mb-4">
@@ -656,60 +739,60 @@
       `;
     }
 
-    function switchUser(userId) {
+    window.switchUser = function(userId) {
       state.currentUserId = userId;
       if (userId === state.activeChatUserId) {
         state.activeChatUserId = Object.keys(PROFILES).find(id => id !== userId);
       }
       render();
-    }
+    };
 
-    function selectContact(contactId) {
+    window.selectContact = function(contactId) {
       state.activeChatUserId = contactId;
       state.showMobileSidebar = false;
       render();
       scrollToBottom();
-    }
+    };
 
-    function showSidebar() {
+    window.showSidebar = function() {
       state.showMobileSidebar = true;
       render();
-    }
+    };
 
-    function toggleTheme() {
+    window.toggleTheme = function() {
       state.isDarkMode = !state.isDarkMode;
       render();
-    }
+    };
 
-    function toggleSound() {
+    window.toggleSound = function() {
       state.soundEnabled = !state.soundEnabled;
       render();
-    }
+    };
 
-    function updateSearch(query) {
+    window.updateSearch = function(query) {
       state.searchQuery = query;
       render();
-    }
+    };
 
-    function togglePicker(msgId) {
+    window.togglePicker = function(msgId) {
       state.selectedPickerMsgId = state.selectedPickerMsgId === msgId ? null : msgId;
       render();
-    }
+    };
 
-    function toggleImageInput() {
+    window.toggleImageInput = function() {
       state.showImageInput = !state.showImageInput;
       render();
-    }
+    };
 
-    function attachImageFromUrl() {
+    window.attachImageFromUrl = function() {
       const input = document.getElementById('img-url-input');
       if (input && input.value.trim()) {
         sendMessage('', input.value.trim());
         state.showImageInput = false;
       }
-    }
+    };
 
-    async function handleFileUpload(e) {
+    window.handleFileUpload = async function(e) {
       const file = e.target.files[0];
       if (file) {
         const compressed = await compressImage(file);
@@ -718,44 +801,49 @@
         }
       }
       e.target.value = '';
-    }
+    };
 
-    function handleSendSubmit(e) {
+    window.handleSendSubmit = function(e) {
       e.preventDefault();
       const input = document.getElementById('message-input');
       if (input && input.value.trim()) {
         sendMessage(input.value);
         input.value = '';
       }
-    }
+    };
 
-    function openSettings() {
+    window.openSettings = function() {
       state.showSettings = true;
       render();
-    }
+    };
 
-    function closeSettings() {
+    window.closeSettings = function() {
       state.showSettings = false;
       render();
-    }
+    };
 
-    function saveSettings() {
+    window.saveSettings = function() {
       const roomInput = document.getElementById('settings-room-input');
       if (roomInput && roomInput.value.trim()) {
         state.roomId = roomInput.value.trim();
         localStorage.setItem('nova_room_id', state.roomId);
-        loadMessagesFromStorage();
-        setupBroadcastChannel();
+        if (isCloudConnected) {
+          subscribeToCloudMessages();
+        } else {
+          loadMessagesFromStorage();
+        }
       }
       state.showSettings = false;
       render();
-    }
+    };
+
+    window.toggleReaction = toggleReaction;
+    window.deleteMessage = deleteMessage;
 
     function bootApp() {
       try {
         initBackgroundCanvas();
-        loadMessagesFromStorage();
-        setupBroadcastChannel();
+        initFirebaseSync();
         render();
         scrollToBottom();
       } catch (e) {

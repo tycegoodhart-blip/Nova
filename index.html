@@ -128,9 +128,16 @@
         });
       }
 
+      function isSingleEmojiText(value) {
+        if (typeof value !== 'string') return false;
+        const text = value.trim();
+        if (!text || text.length !== 1) return false;
+        return !/[A-Za-z0-9\s]/.test(text);
+      }
+
       function renderMessageBubble(msg) {
         const isMe = msg.senderId === state.currentUserId;
-        const isSingleEmoji = typeof msg.text === 'string' && msg.text.trim() && /^([\p{Extended_Pictographic}|\p{Emoji_Presentation}])$/u.test(msg.text.trim()) && !msg.mediaUrl;
+        const isSingleEmoji = isSingleEmojiText(msg.text) && !msg.mediaUrl;
         const formattedTime = new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         const bubbleStyle = isMe ? 'bg-[#db3ab0] text-[#ced2e7]' : 'bg-[#140E26] text-[#ced2e7]';
         const reactions = msg.reactions || {};
@@ -881,7 +888,14 @@
           document.addEventListener('submit', handleSubmit);
           document.addEventListener('change', handleChange);
           window.addEventListener('error', (event) => {
-            console.error('Nova App Guarded Error:', event.error || event.message);
+            const message = String(event.message || '');
+            const filename = String(event.filename || '');
+            const isExternalAssetError = filename && !filename.includes(window.location.pathname);
+            const isIgnorableError = !message || message.includes('Script error') || message.includes('ResizeObserver') || message.includes('NotAllowedError');
+
+            if (isExternalAssetError || isIgnorableError) return;
+
+            console.error('Nova App Guarded Error:', event.error || message);
             const fallback = document.getElementById('error-fallback');
             if (fallback) fallback.classList.remove('hidden');
           });

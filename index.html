@@ -74,109 +74,587 @@
     </div>
   </div>
 
-  <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-    import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-    import { getFirestore, doc, setDoc, deleteDoc, collection, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+  <script>
+    (() => {
+      const PROFILES = {
+        user1: { id: 'user1', name: 'Tyce', handle: '@tyce', avatar: '🚙', color: 'bg-[#db3ab0]', textColor: 'text-[#db3ab0]' },
+        user2: { id: 'user2', name: 'Arch', handle: '@arch', avatar: '✏️', color: 'bg-[#23c2ce]', textColor: 'text-[#23c2ce]' }
+      };
 
-    // Error Safeguard
-    window.onerror = function(msg, url, lineNo, columnNo, error) {
-      console.error('Nova App Guarded Error:', msg, error);
-      const fallback = document.getElementById('error-fallback');
-      if (fallback) fallback.classList.remove('hidden');
-      return true;
-    };
+      const REACTION_EMOJIS = ['🩷', '👍', '👎', '😆', '❗️', '❔'];
 
-    function scrollToBottom() {
-      requestAnimationFrame(() => {
-        const feed = document.getElementById('message-feed');
-        if (feed) {
-          feed.scrollTop = feed.scrollHeight;
+      const state = {
+        currentUserId: 'user1',
+        activeChatUserId: 'user2',
+        isDarkMode: true,
+        soundEnabled: true,
+        searchQuery: '',
+        showMobileSidebar: true,
+        showSettings: false,
+        selectedPickerMsgId: null,
+        messages: [],
+        roomId: (() => {
+          try {
+            return localStorage.getItem('nova_room_id') || 'nova-room-777';
+          } catch (error) {
+            return 'nova-room-777';
+          }
+        })(),
+        copySuccess: false
+      };
+
+      let mqttClient = null;
+      let isMqttConnected = false;
+      let auth = null;
+      let db = null;
+      let cloudReady = false;
+      let audioCtxInstance = null;
+      let firebaseApi = null;
+
+      const appId = window.__app_id || 'nova-messaging-app';
+      const firebaseConfig = (() => {
+        try {
+          return window.__firebase_config ? JSON.parse(window.__firebase_config) : null;
+        } catch (error) {
+          console.warn('Firebase config invalid:', error);
+          return null;
         }
-      });
-    }
+      })();
 
-    // App User Profiles
-    const PROFILES = {
-      user1: {
-        id: 'user1',
-        name: 'Tyce',
-        handle: '@tyce',
-        avatar: '🚙',
-        status: 'Online',
-        color: 'bg-[#db3ab0]',
-        textColor: 'text-[#db3ab0]'
-      },
-      user2: {
-        id: 'user2',
-        name: 'Arch',
-        handle: '@arch',
-        avatar: '✏️',
-        status: 'Active now',
-        color: 'bg-[#23c2ce]',
-        textColor: 'text-[#23c2ce]'
-      }
-    };
-
-    const REACTION_EMOJIS = ['🩷', '👍', '👎', '😆', '❗️', '❔'];
-
-    // Global State
-    let state = {
-      currentUserId: 'user1',
-      activeChatUserId: 'user2',
-      isDarkMode: true,
-      soundEnabled: true,
-      searchQuery: '',
-      showMobileSidebar: true,
-      showSettings: false,
-      showImageInput: false,
-      selectedPickerMsgId: null,
-      messages: [],
-      roomId: localStorage.getItem('nova_room_id') || 'nova-room-777',
-      copySuccess: false
-    };
-
-    let db = null;
-    let auth = null;
-    let isCloudConnected = false;
-    let mqttClient = null;
-    let isMqttConnected = false;
-    let audioCtxInstance = null;
-
-    const appId = typeof __app_id !== 'undefined' ? __app_id : 'nova-messaging-app';
-    const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
-
-    function initMqttRelay() {
-      if (mqttClient) {
-        try { mqttClient.end(true); } catch(e) {}
-      }
-      
-      // Safely access global mqtt library loaded from script tag
-      const mqttLib = window.mqtt || (typeof mqtt !== 'undefined' ? mqtt : null);
-      if (!mqttLib) {
-        console.warn("MQTT library not ready or loaded yet.");
-        return;
+      function scrollToBottom() {
+        requestAnimationFrame(() => {
+          const feed = document.getElementById('message-feed');
+          if (feed) feed.scrollTop = feed.scrollHeight;
+        });
       }
 
-      try {
-        // Public EMQX MQTT Broker over WebSockets
-        const brokerUrl = 'wss://broker.emqx.io:8084/mqtt';
-        const clientId = 'nova_client_' + Math.random().toString(36).substring(2, 10);
-        
-        mqttClient = mqttLib.connect(brokerUrl, {
-          clientId: clientId,
+      function renderMessageBubble(msg) {
+        const isMe = msg.senderId === state.currentUserId;
+        const isSingleEmoji = typeof msg.text === 'string' && msg.text.trim() && /^([\p{Extended_Pictographic}|\p{Emoji_Presentation}])$/u.test(msg.text.trim()) && !msg.mediaUrl;
+        const formattedTime = new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const bubbleStyle = isMe ? 'bg-[#db3ab0] text-[#ced2e7]' : 'bg-[#140E26] text-[#ced2e7]';
+        const reactions = msg.reactions || {};
+        const showPicker = state.selectedPickerMsgId === msg.id;
+
+        return `
+          <div class="group relative flex flex-col my-1 ${isMe ? 'items-end' : 'items-start'}">
+            ${showPicker ? `
+              <div class="absolute -top-9 ${isMe ? 'right-2' : 'left-2'} bg-[#140E26] backdrop-blur-md rounded-full px-2.5 py-1 flex items-center space-x-1.5 shadow-xl z-20">
+                ${REACTION_EMOJIS.map((emoji) => {
+                  const hasReacted = (reactions[emoji] || []).includes(state.currentUserId);
+                  return `
+                    <button data-action="toggle-reaction" data-msg-id="${msg.id}" data-emoji="${emoji}" class="text-sm p-1 rounded-full transition-transform active:scale-125 ${hasReacted ? 'bg-[#1f1745]' : 'hover:bg-[#1f1745]'}">
+                      ${emoji}
+                    </button>
+                  `;
+                }).join('')}
+                ${isMe ? `
+                  <button data-action="delete-message" data-msg-id="${msg.id}" class="text-[#ced2e7] hover:text-red-400 text-xs p-1 ml-1" title="Delete message">🗑️</button>
+                ` : ''}
+              </div>
+            ` : ''}
+
+            ${isSingleEmoji ? `
+              <div data-action="toggle-picker" data-msg-id="${msg.id}" class="cursor-pointer transition-transform active:scale-110 text-5xl sm:text-6xl p-1 select-none my-0.5">
+                ${msg.text}
+              </div>
+            ` : `
+              <div data-action="toggle-picker" data-msg-id="${msg.id}" class="cursor-pointer transition-all max-w-[85%] sm:max-w-[75%] px-3.5 py-2.5 rounded-2xl text-xs sm:text-sm shadow-sm ${bubbleStyle} ${isMe ? 'font-medium' : ''}">
+                ${msg.mediaUrl ? `
+                  <div class="mb-2 overflow-hidden rounded-xl max-w-xs">
+                    <img src="${msg.mediaUrl}" alt="Attachment" class="max-h-56 w-full object-cover rounded-lg" onerror="this.style.display='none'" />
+                  </div>
+                ` : ''}
+                ${msg.text ? `<p class="leading-relaxed break-words">${msg.text}</p>` : ''}
+                <div class="mt-1 text-[9px] text-right ${isMe ? 'text-[#ced2e7]/80' : 'text-[#ced2e7]/60'}">${formattedTime}</div>
+              </div>
+            `}
+
+            ${Object.keys(reactions).length > 0 ? `
+              <div class="flex flex-wrap gap-1 mt-1 ${isMe ? 'justify-end' : 'justify-start'}">
+                ${Object.entries(reactions).map(([emoji, users]) => {
+                  if (!users || users.length === 0) return '';
+                  const hasIReacted = users.includes(state.currentUserId);
+                  const colorUserId = hasIReacted ? state.currentUserId : users[0];
+                  const profile = PROFILES[colorUserId] || PROFILES.user2;
+                  return `
+                    <button data-action="toggle-reaction" data-msg-id="${msg.id}" data-emoji="${emoji}" class="flex items-center space-x-1 text-[10px] px-2 py-0.5 rounded-full font-bold shadow-sm ${profile.color} text-[#ced2e7]">
+                      <span>${emoji}</span>
+                      <span class="text-[9px] font-mono">${users.length}</span>
+                    </button>
+                  `;
+                }).join('')}
+              </div>
+            ` : ''}
+          </div>
+        `;
+      }
+
+      function renderSettingsModal() {
+        return `
+          <div class="fixed inset-0 bg-[#ced2e7]/20 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div class="w-full max-w-md rounded-3xl p-5 sm:p-6 shadow-2xl bg-[#140E26] text-[#ced2e7]">
+              <h3 class="font-extrabold text-base mb-1">Cross-Device Pairing Settings</h3>
+              <p class="text-xs text-[#ced2e7] mb-4">
+                Enter the exact same <strong>Room Code</strong> on your phone, tablet, or laptop to sync live in real time.
+              </p>
+              <div class="mb-4">
+                <label class="block text-xs font-bold text-[#ced2e7] mb-1">Room Sync Code</label>
+                <div class="flex items-center space-x-2">
+                  <input id="settings-room-input" type="text" value="${state.roomId}" class="flex-1 px-3 py-2 text-xs rounded-xl bg-[#140E26] text-[#23c2ce] font-mono focus:outline-none shadow-inner" />
+                  <button data-action="copy-room-code" class="px-3 py-2 bg-[#140E26] hover:bg-[#1f1745] text-[#23c2ce] text-xs font-bold rounded-xl shadow-sm">Copy</button>
+                </div>
+              </div>
+              <div class="flex items-center justify-end space-x-2 pt-2">
+                <button data-action="close-settings" class="px-4 py-2 rounded-xl text-xs text-[#ced2e7]">Cancel</button>
+                <button data-action="save-settings" class="px-4 py-2 rounded-xl text-xs font-bold bg-[#db3ab0] text-[#ced2e7] shadow-md">Save & Connect Room</button>
+              </div>
+            </div>
+          </div>
+        `;
+      }
+
+      function renderAppShell() {
+        const app = document.getElementById('app');
+        if (!app) return;
+
+        const currentUser = PROFILES[state.currentUserId] || PROFILES.user1;
+        const activePartner = PROFILES[state.activeChatUserId] || PROFILES.user2;
+        const activeMsgs = state.messages.filter((msg) => {
+          const fromMe = msg.senderId === state.currentUserId && msg.receiverId === state.activeChatUserId;
+          const toMe = msg.senderId === state.activeChatUserId && msg.receiverId === state.currentUserId;
+          return fromMe || toMe;
+        });
+
+        const filteredContacts = Object.values(PROFILES).filter((profile) => {
+          return profile.id !== state.currentUserId && profile.name.toLowerCase().includes(state.searchQuery.toLowerCase());
+        });
+
+        app.className = 'h-full w-full flex flex-col font-sans transition-colors duration-300 overflow-hidden bg-[#1f1745] text-[#ced2e7]';
+        app.innerHTML = `
+          <header class="px-3 sm:px-4 py-2.5 flex items-center justify-between text-xs glass-card z-30 shrink-0 pt-safe bg-[#140E26]/90 text-[#ced2e7] border-none">
+            <div class="flex items-center space-x-2">
+              <span class="font-extrabold tracking-wider text-[#db3ab0] text-xl leading-none px-1">NOVA</span>
+              <button data-action="copy-room-code" class="text-[#ced2e7] hover:text-[#23c2ce] font-medium transition-all text-xs" title="Copy Room Code">
+                Room Code: <strong class="font-mono text-[#23c2ce]">${state.roomId}</strong>${state.copySuccess ? ' <span class="text-[#23c2ce] font-normal">(Copied!)</span>' : ''}
+              </button>
+            </div>
+
+            <div class="flex items-center space-x-1.5 sm:space-x-2">
+              ${Object.values(PROFILES).map((profile) => {
+                const isSelf = profile.id === state.currentUserId;
+                const accent = profile.id === 'user1'
+                  ? 'bg-[#db3ab0] text-[#ced2e7] font-bold shadow-md shadow-[#db3ab0]/20'
+                  : 'bg-[#23c2ce] text-[#ced2e7] font-bold shadow-md shadow-[#23c2ce]/20';
+                return `
+                  <button data-action="switch-user" data-user-id="${profile.id}" class="flex items-center space-x-1 px-2.5 py-1 rounded-lg text-xs transition-all active:scale-95 ${isSelf ? accent : 'bg-[#0e0b21] text-[#ced2e7] hover:text-[#23c2ce]'}" title="Set active profile to ${profile.name}">
+                    <span class="text-sm">${profile.avatar}</span>
+                    <span class="font-semibold text-xs">${profile.name}</span>
+                  </button>
+                `;
+              }).join('')}
+
+              <button data-action="toggle-sound" class="p-1.5 rounded-lg text-[#ced2e7] hover:text-[#23c2ce] active:scale-95" title="Toggle Sound">
+                ${state.soundEnabled ? '🔈' : '🔇'}
+              </button>
+              <button data-action="open-settings" class="p-1.5 rounded-lg text-[#ced2e7] hover:text-[#23c2ce] active:scale-95" title="Room & Sync Settings">
+                ⚙️
+              </button>
+              <button data-action="toggle-theme" class="p-1.5 rounded-lg text-[#ced2e7] hover:text-[#23c2ce] active:scale-95" title="Toggle Theme">
+                ${state.isDarkMode ? '🌙' : '☀️'}
+              </button>
+            </div>
+          </header>
+
+          <div class="flex-1 w-full max-w-6xl mx-auto p-2 sm:p-3 md:p-4 flex gap-3 sm:gap-4 overflow-hidden">
+            <div class="w-full sm:w-80 md:w-88 flex flex-col shrink-0 h-full rounded-2xl sm:rounded-3xl overflow-hidden shadow-2xl glass-card transition-all ${state.showMobileSidebar ? 'flex' : 'hidden sm:flex'} bg-[#140E26]/85 shadow-2xl border-none">
+              <div class="p-3.5 flex items-center justify-between bg-[#0e0b21] rounded-t-2xl sm:rounded-t-3xl border-b border-[#0e0b21]/50">
+                <div class="flex items-center space-x-2.5">
+                  <span class="text-2xl">${currentUser.avatar}</span>
+                  <div>
+                    <h2 class="font-bold text-sm leading-tight">${currentUser.name}</h2>
+                    <p class="text-[11px] font-medium ${currentUser.textColor}">Current Profile</p>
+                  </div>
+                </div>
+              </div>
+
+              <div class="p-2.5">
+                <input data-action="search-contacts" type="text" placeholder="Search contacts..." value="${state.searchQuery}" class="w-full px-3 py-2 rounded-xl text-xs focus:outline-none bg-[#0e0b21] text-[#23c2ce] placeholder-[#ced2e7] shadow-inner" />
+              </div>
+
+              <div class="flex-1 overflow-y-auto px-2 space-y-1 smooth-scroll pb-3">
+                ${filteredContacts.map((contact) => {
+                  const lastMsg = state.messages
+                    .filter((msg) => (msg.senderId === state.currentUserId && msg.receiverId === contact.id) || (msg.senderId === contact.id && msg.receiverId === state.currentUserId))
+                    .pop();
+                  return `
+                    <button data-action="select-contact" data-contact-id="${contact.id}" class="w-full p-3 rounded-2xl flex items-center space-x-3 text-left transition-all active:scale-98 bg-[#0e0b21] text-[#ced2e7]">
+                      <div class="w-11 h-11 rounded-2xl ${contact.color} flex items-center justify-center text-xl shadow-md shrink-0">${contact.avatar}</div>
+                      <div class="flex-1 min-w-0">
+                        <div class="flex items-center justify-between mb-0.5">
+                          <span class="font-semibold text-xs truncate text-[#ced2e7]">${contact.name}</span>
+                        </div>
+                        <p class="text-xs ${contact.textColor} truncate">${lastMsg ? (lastMsg.mediaUrl ? '📷 Attachment' : lastMsg.text) : '<span class="italic">No messages</span>'}</p>
+                      </div>
+                    </button>
+                  `;
+                }).join('')}
+              </div>
+            </div>
+
+            <div class="flex-1 flex flex-col h-full rounded-2xl sm:rounded-3xl overflow-hidden shadow-2xl glass-card transition-all ${!state.showMobileSidebar ? 'flex' : 'hidden sm:flex'} bg-[#140E26]/85 shadow-2xl border-none">
+              <div class="px-4 py-3 flex items-center justify-between shrink-0 bg-[#0e0b21] rounded-t-2xl sm:rounded-t-3xl border-b border-[#0e0b21]/50">
+                <div class="flex items-center space-x-3">
+                  <button data-action="show-sidebar" class="sm:hidden text-[#23c2ce] font-bold text-xs p-1">◀ Contacts</button>
+                  <div class="w-9 h-9 rounded-xl ${activePartner.color} flex items-center justify-center text-lg shadow-sm">${activePartner.avatar}</div>
+                  <div>
+                    <h2 class="font-bold text-sm leading-tight">${activePartner.name}</h2>
+                    <p class="text-[11px] font-medium ${activePartner.textColor}">${activePartner.handle}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div id="message-feed" class="flex-1 p-3 sm:p-4 overflow-y-auto space-y-3 smooth-scroll bg-[#140E26]/30">
+                ${activeMsgs.length === 0 ? `
+                  <div class="h-full flex flex-col items-center justify-center text-center p-6 space-y-2">
+                    <div class="text-4xl mb-1">${activePartner.avatar}</div>
+                    <h3 class="font-bold text-[#23c2ce] text-sm">Messaging ${activePartner.name}</h3>
+                    <p class="text-xs text-[#ced2e7] max-w-sm">Enter Room Code <strong class="text-[#23c2ce] font-mono">${state.roomId}</strong> on your other device to connect live instantly.</p>
+                  </div>
+                ` : activeMsgs.map(renderMessageBubble).join('')}
+              </div>
+
+              <div class="p-2.5 sm:p-3 shrink-0 pb-safe bg-[#0e0b21] rounded-b-2xl sm:rounded-b-3xl">
+                <form data-form="send-message" class="flex items-center space-x-1.5 sm:space-x-2">
+                  <label class="cursor-pointer p-2 rounded-xl text-[#ced2e7] hover:text-[#23c2ce] text-lg transition-transform active:scale-95" title="Attach Image File">
+                    📎
+                    <input data-action="upload-image" type="file" accept="image/*" class="hidden" />
+                  </label>
+                  <input id="message-input" type="text" placeholder="Message to ${activePartner.name}..." class="flex-1 px-4 py-2.5 rounded-full text-xs sm:text-sm focus:outline-none transition-all bg-[#140E26] text-[#ced2e7] placeholder-[#ced2e7]/60 shadow-inner" />
+                  <button type="submit" class="px-4 py-2.5 rounded-full text-xs font-bold transition-all ${state.currentUserId === 'user1' ? 'bg-[#db3ab0] text-[#ced2e7] shadow-md shadow-[#db3ab0]/20 active:scale-95' : 'bg-[#23c2ce] text-[#ced2e7] shadow-md shadow-[#23c2ce]/20 active:scale-95'}">Send</button>
+                </form>
+              </div>
+            </div>
+          </div>
+
+          ${state.showSettings ? renderSettingsModal() : ''}
+        `;
+      }
+
+      function render() {
+        renderAppShell();
+        scrollToBottom();
+      }
+
+      function loadMessagesFromStorage() {
+        try {
+          const stored = localStorage.getItem(`nova_msgs_${state.roomId}`);
+          state.messages = stored ? JSON.parse(stored) : [];
+        } catch (error) {
+          state.messages = [];
+        }
+      }
+
+      function saveMessagesToStorage() {
+        try {
+          localStorage.setItem(`nova_msgs_${state.roomId}`, JSON.stringify(state.messages));
+        } catch (error) {
+          // no-op
+        }
+      }
+
+      function initBackgroundCanvas() {
+        const canvas = document.getElementById('bg-canvas');
+        if (!canvas) return;
+
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+
+        let width = canvas.width = window.innerWidth;
+        let height = canvas.height = window.innerHeight;
+        const particles = [];
+        const particleCount = Math.min(Math.floor((width * height) / 18000), 45);
+
+        class Particle {
+          constructor() {
+            this.reset();
+          }
+          reset() {
+            this.x = Math.random() * width;
+            this.y = Math.random() * height;
+            this.vx = (Math.random() - 0.5) * 0.4;
+            this.vy = (Math.random() - 0.5) * 0.4;
+            this.radius = Math.random() * 2 + 1;
+            this.alpha = Math.random() * 0.4 + 0.1;
+            this.color = Math.random() > 0.5 ? '#db3ab0' : '#22d3ee';
+          }
+          update() {
+            this.x += this.vx;
+            this.y += this.vy;
+            if (this.x < 0 || this.x > width) this.vx *= -1;
+            if (this.y < 0 || this.y > height) this.vy *= -1;
+          }
+          draw() {
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+            ctx.fillStyle = this.color;
+            ctx.globalAlpha = state.isDarkMode ? this.alpha : this.alpha * 0.5;
+            ctx.fill();
+          }
+        }
+
+        for (let i = 0; i < particleCount; i++) {
+          particles.push(new Particle());
+        }
+
+        const drawConstellations = () => {
+          for (let i = 0; i < particles.length; i++) {
+            for (let j = i + 1; j < particles.length; j++) {
+              const dx = particles[i].x - particles[j].x;
+              const dy = particles[i].y - particles[j].y;
+              const dist = Math.sqrt(dx * dx + dy * dy);
+              if (dist < 120) {
+                ctx.beginPath();
+                ctx.moveTo(particles[i].x, particles[i].y);
+                ctx.lineTo(particles[j].x, particles[j].y);
+                ctx.strokeStyle = state.isDarkMode ? 'rgba(35, 194, 206, 0.12)' : 'rgba(219, 58, 176, 0.12)';
+                ctx.lineWidth = 1 - dist / 120;
+                ctx.stroke();
+              }
+            }
+          }
+        };
+
+        const animate = () => {
+          ctx.clearRect(0, 0, width, height);
+          particles.forEach((p) => {
+            p.update();
+            p.draw();
+          });
+          drawConstellations();
+          requestAnimationFrame(animate);
+        };
+
+        window.addEventListener('resize', () => {
+          width = canvas.width = window.innerWidth;
+          height = canvas.height = window.innerHeight;
+        });
+
+        animate();
+      }
+
+      function playNotificationSound() {
+        if (!state.soundEnabled) return;
+
+        try {
+          if (!audioCtxInstance) {
+            const AudioCtor = window.AudioContext || window.webkitAudioContext;
+            if (AudioCtor) audioCtxInstance = new AudioCtor();
+          }
+          if (!audioCtxInstance) return;
+          if (audioCtxInstance.state === 'suspended') audioCtxInstance.resume();
+
+          const osc = audioCtxInstance.createOscillator();
+          const gain = audioCtxInstance.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(587.33, audioCtxInstance.currentTime);
+          osc.frequency.exponentialRampToValueAtTime(880, audioCtxInstance.currentTime + 0.15);
+          gain.gain.setValueAtTime(0.08, audioCtxInstance.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, audioCtxInstance.currentTime + 0.15);
+          osc.connect(gain);
+          gain.connect(audioCtxInstance.destination);
+          osc.start();
+          osc.stop(audioCtxInstance.currentTime + 0.15);
+        } catch (error) {
+          // no-op
+        }
+      }
+
+      function compressImage(file) {
+        return new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.readAsDataURL(file);
+          reader.onload = (event) => {
+            const image = new Image();
+            image.src = event.target.result;
+            image.onload = () => {
+              let width = image.width;
+              let height = image.height;
+              const maxSize = 800;
+              if (width > maxSize || height > maxSize) {
+                if (width > height) {
+                  height = Math.round((height * maxSize) / width);
+                  width = maxSize;
+                } else {
+                  width = Math.round((width * maxSize) / height);
+                  height = maxSize;
+                }
+              }
+              const canvas = document.createElement('canvas');
+              canvas.width = width;
+              canvas.height = height;
+              const context = canvas.getContext('2d');
+              context.drawImage(image, 0, 0, width, height);
+              resolve(canvas.toDataURL('image/jpeg', 0.7));
+            };
+            image.onerror = () => resolve(null);
+          };
+          reader.onerror = () => resolve(null);
+        });
+      }
+
+      function handleIncomingMessage(msg) {
+        if (!msg || !msg.id) return;
+        const exists = state.messages.some((item) => item.id === msg.id);
+        if (!exists) {
+          state.messages.push(msg);
+          state.messages.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+          saveMessagesToStorage();
+          if (msg.senderId !== state.currentUserId) playNotificationSound();
+          render();
+          scrollToBottom();
+        }
+      }
+
+      function handleIncomingDelete(msgId) {
+        state.messages = state.messages.filter((msg) => msg.id !== msgId);
+        saveMessagesToStorage();
+        render();
+      }
+
+      function handleIncomingReaction(msgId, reactions) {
+        const msg = state.messages.find((item) => item.id === msgId);
+        if (!msg) return;
+        msg.reactions = reactions;
+        saveMessagesToStorage();
+        render();
+      }
+
+      async function sendMessage(text, mediaUrl = null) {
+        const cleanText = typeof text === 'string' ? text.trim() : '';
+        if (!cleanText && !mediaUrl) return;
+
+        const msg = {
+          id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          roomId: state.roomId,
+          senderId: state.currentUserId,
+          receiverId: state.activeChatUserId,
+          text: cleanText,
+          mediaUrl: mediaUrl || null,
+          timestamp: Date.now(),
+          reactions: {}
+        };
+
+        state.messages.push(msg);
+        saveMessagesToStorage();
+        render();
+        scrollToBottom();
+
+        if (mqttClient && isMqttConnected) {
+          try {
+            mqttClient.publish(`nova/rooms/${state.roomId}/channel`, JSON.stringify({ type: 'NEW_MESSAGE', msg }));
+          } catch (error) {
+            console.error('MQTT broadcast error:', error);
+          }
+        }
+
+        if (cloudReady && db && auth && auth.currentUser && firebaseApi) {
+          try {
+            const msgDoc = firebaseApi.doc(db, 'artifacts', appId, 'public', 'data', 'messages', msg.id);
+            await firebaseApi.setDoc(msgDoc, msg);
+          } catch (error) {
+            console.error('Cloud send failed:', error);
+          }
+        }
+      }
+
+      async function deleteMessage(msgId) {
+        state.selectedPickerMsgId = null;
+        state.messages = state.messages.filter((msg) => msg.id !== msgId);
+        saveMessagesToStorage();
+        render();
+
+        if (mqttClient && isMqttConnected) {
+          try {
+            mqttClient.publish(`nova/rooms/${state.roomId}/channel`, JSON.stringify({ type: 'DELETE_MESSAGE', msgId }));
+          } catch (error) {
+            console.warn('Delete broadcast failed:', error);
+          }
+        }
+
+        if (cloudReady && db && auth && auth.currentUser && firebaseApi) {
+          try {
+            const msgDoc = firebaseApi.doc(db, 'artifacts', appId, 'public', 'data', 'messages', msgId);
+            await firebaseApi.deleteDoc(msgDoc);
+          } catch (error) {
+            console.error('Cloud delete failed:', error);
+          }
+        }
+      }
+
+      async function toggleReaction(msgId, emoji) {
+        const msg = state.messages.find((item) => item.id === msgId);
+        if (!msg) return;
+
+        const currentUsers = msg.reactions?.[emoji] || [];
+        const newUsers = currentUsers.includes(state.currentUserId)
+          ? currentUsers.filter((userId) => userId !== state.currentUserId)
+          : [...currentUsers, state.currentUserId];
+
+        const updated = { ...(msg.reactions || {}) };
+        if (newUsers.length === 0) delete updated[emoji];
+        else updated[emoji] = newUsers;
+
+        state.selectedPickerMsgId = null;
+        msg.reactions = updated;
+        saveMessagesToStorage();
+        render();
+
+        if (mqttClient && isMqttConnected) {
+          try {
+            mqttClient.publish(`nova/rooms/${state.roomId}/channel`, JSON.stringify({ type: 'REACTION_UPDATE', msgId, reactions: updated }));
+          } catch (error) {
+            console.warn('Reaction broadcast failed:', error);
+          }
+        }
+
+        if (cloudReady && db && auth && auth.currentUser && firebaseApi) {
+          try {
+            const msgDoc = firebaseApi.doc(db, 'artifacts', appId, 'public', 'data', 'messages', msgId);
+            await firebaseApi.setDoc(msgDoc, { ...msg, reactions: updated });
+          } catch (error) {
+            console.error('Cloud reaction failed:', error);
+          }
+        }
+      }
+
+      function resetMqtt() {
+        if (mqttClient) {
+          try {
+            mqttClient.end(true);
+          } catch (error) {
+            // no-op
+          }
+        }
+
+        const mqttLib = window.mqtt || window.MQTT;
+        if (!mqttLib) {
+          console.warn('MQTT library not ready yet');
+          return;
+        }
+
+        mqttClient = mqttLib.connect('wss://broker.emqx.io:8084/mqtt', {
+          clientId: `nova_client_${Math.random().toString(36).slice(2, 10)}`,
           clean: true,
           connectTimeout: 5000,
-          reconnectPeriod: 3000
+          reconnectPeriod: 3000,
         });
 
         mqttClient.on('connect', () => {
           isMqttConnected = true;
-          const roomTopic = `nova/rooms/${state.roomId}/channel`;
-          mqttClient.subscribe(roomTopic, (err) => {
-            if (!err) {
-              console.log("Subscribed to cross-device room topic:", roomTopic);
-            }
+          const topic = `nova/rooms/${state.roomId}/channel`;
+          mqttClient.subscribe(topic, (error) => {
+            if (!error) console.log('Subscribed to topic:', topic);
           });
           render();
         });
@@ -185,21 +663,16 @@
           try {
             const data = JSON.parse(payload.toString());
             if (!data) return;
-
-            if (data.type === 'NEW_MESSAGE' && data.msg) {
-              handleIncomingMessage(data.msg);
-            } else if (data.type === 'DELETE_MESSAGE' && data.msgId) {
-              handleIncomingDelete(data.msgId);
-            } else if (data.type === 'REACTION_UPDATE' && data.msgId && data.reactions) {
-              handleIncomingReaction(data.msgId, data.reactions);
-            }
-          } catch(e) {
-            console.error("MQTT message parse error:", e);
+            if (data.type === 'NEW_MESSAGE' && data.msg) handleIncomingMessage(data.msg);
+            if (data.type === 'DELETE_MESSAGE' && data.msgId) handleIncomingDelete(data.msgId);
+            if (data.type === 'REACTION_UPDATE' && data.msgId && data.reactions) handleIncomingReaction(data.msgId, data.reactions);
+          } catch (error) {
+            console.error('MQTT parse error:', error);
           }
         });
 
-        mqttClient.on('error', (err) => {
-          console.warn("MQTT relay warning:", err);
+        mqttClient.on('error', (error) => {
+          console.warn('MQTT warning:', error);
           isMqttConnected = false;
           render();
         });
@@ -208,788 +681,238 @@
           isMqttConnected = false;
           render();
         });
-      } catch(e) {
-        console.error("MQTT Relay Init Failed:", e);
       }
-    }
 
-    function handleIncomingMessage(msg) {
-      if (!msg || !msg.id) return;
-      const exists = state.messages.some(m => m.id === msg.id);
-      if (!exists) {
-        state.messages.push(msg);
-        state.messages.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
-        saveAndSyncMessages();
-        if (msg.senderId !== state.currentUserId) {
-          playNotificationSound();
-        }
-        render();
-        scrollToBottom();
-      }
-    }
-
-    function handleIncomingDelete(msgId) {
-      state.messages = state.messages.filter(m => m.id !== msgId);
-      saveAndSyncMessages();
-      render();
-    }
-
-    function handleIncomingReaction(msgId, reactions) {
-      const msg = state.messages.find(m => m.id === msgId);
-      if (msg) {
-        msg.reactions = reactions;
-        saveAndSyncMessages();
-        render();
-      }
-    }
-
-    async function initFirebaseSync() {
-      if (!firebaseConfig) {
-        loadMessagesFromStorage();
-        return;
-      }
-      try {
-        const app = initializeApp(firebaseConfig);
-        auth = getAuth(app);
-        db = getFirestore(app);
-
-        const initialToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-        if (initialToken) {
-          await signInWithCustomToken(auth, initialToken);
-        } else {
-          await signInAnonymously(auth);
+      async function loadFirebase() {
+        if (!firebaseConfig) {
+          loadMessagesFromStorage();
+          return;
         }
 
-        if (auth.currentUser) {
-          isCloudConnected = true;
-          subscribeToCloudMessages();
+        try {
+          const [firebaseApp, firebaseAuth, firebaseFirestore] = await Promise.all([
+            import('https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js'),
+            import('https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js'),
+            import('https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js')
+          ]);
+
+          firebaseApi = {
+            initializeApp: firebaseApp.initializeApp,
+            getAuth: firebaseAuth.getAuth,
+            signInAnonymously: firebaseAuth.signInAnonymously,
+            signInWithCustomToken: firebaseAuth.signInWithCustomToken,
+            getFirestore: firebaseFirestore.getFirestore,
+            doc: firebaseFirestore.doc,
+            setDoc: firebaseFirestore.setDoc,
+            deleteDoc: firebaseFirestore.deleteDoc,
+            collection: firebaseFirestore.collection,
+            onSnapshot: firebaseFirestore.onSnapshot,
+          };
+
+          const app = firebaseApi.initializeApp(firebaseConfig);
+          auth = firebaseApi.getAuth(app);
+          db = firebaseApi.getFirestore(app);
+
+          const token = window.__initial_auth_token || null;
+          if (token) await firebaseApi.signInWithCustomToken(auth, token);
+          else await firebaseApi.signInAnonymously(auth);
+
+          if (auth.currentUser) {
+            cloudReady = true;
+            subscribeToCloudMessages();
+          }
+        } catch (error) {
+          console.error('Firebase init failed:', error);
+          cloudReady = false;
+          loadMessagesFromStorage();
         }
-      } catch (err) {
-        console.error("Firebase init failed:", err);
-        isCloudConnected = false;
-        loadMessagesFromStorage();
       }
-    }
 
-    function subscribeToCloudMessages() {
-      if (!db || !auth || !auth.currentUser) return;
-      
-      const messagesCol = collection(db, 'artifacts', appId, 'public', 'data', 'messages');
+      function subscribeToCloudMessages() {
+        if (!cloudReady || !db || !auth || !auth.currentUser || !firebaseApi) return;
 
-      onSnapshot(
-        messagesCol,
-        (snapshot) => {
-          const loaded = [];
+        const messagesCol = firebaseApi.collection(db, 'artifacts', appId, 'public', 'data', 'messages');
+        firebaseApi.onSnapshot(messagesCol, (snapshot) => {
+          const nextMessages = [];
           snapshot.forEach((docSnap) => {
             const data = docSnap.data();
-            if (data && data.roomId === state.roomId) {
-              loaded.push(data);
-            }
+            if (data && data.roomId === state.roomId) nextMessages.push(data);
           });
-
-          loaded.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+          nextMessages.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
 
           const prevCount = state.messages.length;
-          state.messages = loaded;
-
+          state.messages = nextMessages;
           if (state.messages.length > prevCount && prevCount > 0) {
             const newest = state.messages[state.messages.length - 1];
-            if (newest.senderId !== state.currentUserId) {
-              playNotificationSound();
-            }
+            if (newest.senderId !== state.currentUserId) playNotificationSound();
           }
-
           render();
           scrollToBottom();
-        },
-        (error) => {
-          console.error("Firestore snapshot error:", error);
-          isCloudConnected = false;
+        }, (error) => {
+          console.error('Firestore snapshot error:', error);
+          cloudReady = false;
+          render();
+        });
+      }
+
+      function handleClick(event) {
+        const target = event.target.closest('[data-action]');
+        if (!target) return;
+
+        const action = target.dataset.action;
+        switch (action) {
+          case 'copy-room-code':
+            try {
+              const input = document.createElement('textarea');
+              input.value = state.roomId;
+              input.setAttribute('readonly', '');
+              input.style.position = 'fixed';
+              input.style.opacity = '0';
+              document.body.appendChild(input);
+              input.select();
+              document.execCommand('copy');
+              document.body.removeChild(input);
+              state.copySuccess = true;
+              render();
+              setTimeout(() => {
+                state.copySuccess = false;
+                render();
+              }, 1500);
+            } catch (error) {
+              console.warn('Copy failed:', error);
+            }
+            break;
+          case 'toggle-sound':
+            state.soundEnabled = !state.soundEnabled;
+            render();
+            break;
+          case 'open-settings':
+            state.showSettings = true;
+            render();
+            break;
+          case 'close-settings':
+            state.showSettings = false;
+            render();
+            break;
+          case 'save-settings':
+            const roomInput = document.getElementById('settings-room-input');
+            if (roomInput && roomInput.value.trim()) {
+              state.roomId = roomInput.value.trim();
+              try { localStorage.setItem('nova_room_id', state.roomId); } catch (error) {}
+              state.showSettings = false;
+              loadMessagesFromStorage();
+              resetMqtt();
+              render();
+            }
+            break;
+          case 'toggle-theme':
+            state.isDarkMode = !state.isDarkMode;
+            render();
+            break;
+          case 'switch-user':
+            state.currentUserId = target.dataset.userId;
+            if (state.currentUserId === state.activeChatUserId) {
+              const other = Object.keys(PROFILES).find((id) => id !== state.currentUserId) || state.currentUserId;
+              state.activeChatUserId = other;
+            }
+            render();
+            break;
+          case 'select-contact':
+            state.activeChatUserId = target.dataset.contactId;
+            state.showMobileSidebar = false;
+            render();
+            scrollToBottom();
+            break;
+          case 'show-sidebar':
+            state.showMobileSidebar = true;
+            render();
+            break;
+          case 'toggle-picker':
+            state.selectedPickerMsgId = state.selectedPickerMsgId === target.dataset.msgId ? null : target.dataset.msgId;
+            render();
+            break;
+          case 'toggle-reaction':
+            toggleReaction(target.dataset.msgId, target.dataset.emoji);
+            break;
+          case 'delete-message':
+            deleteMessage(target.dataset.msgId);
+            break;
+          default:
+            break;
+        }
+      }
+
+      function handleInput(event) {
+        if (event.target.matches('[data-action="search-contacts"]')) {
+          state.searchQuery = event.target.value;
           render();
         }
-      );
-    }
+      }
 
-    // Interactive HTML5 Background Canvas System
-    function initBackgroundCanvas() {
-      const canvas = document.getElementById('bg-canvas');
-      if (!canvas) return;
-      const ctx = canvas.getContext('2d');
-      let width = (canvas.width = window.innerWidth);
-      let height = (canvas.height = window.innerHeight);
-
-      let particles = [];
-      const particleCount = Math.min(Math.floor((width * height) / 18000), 45);
-
-      class Particle {
-        constructor() {
-          this.reset();
-        }
-        reset() {
-          this.x = Math.random() * width;
-          this.y = Math.random() * height;
-          this.vx = (Math.random() - 0.5) * 0.4;
-          this.vy = (Math.random() - 0.5) * 0.4;
-          this.radius = Math.random() * 2 + 1;
-          this.alpha = Math.random() * 0.4 + 0.1;
-          this.color = Math.random() > 0.5 ? '#db3ab0' : '#22d3ee';
-        }
-        update() {
-          this.x += this.vx;
-          this.y += this.vy;
-          if (this.x < 0 || this.x > width) this.vx *= -1;
-          if (this.y < 0 || this.y > height) this.vy *= -1;
-        }
-        draw() {
-          ctx.beginPath();
-          ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
-          ctx.fillStyle = this.color;
-          ctx.globalAlpha = state.isDarkMode ? this.alpha : this.alpha * 0.5;
-          ctx.fill();
+      function handleSubmit(event) {
+        if (!event.target.matches('[data-form="send-message"]')) return;
+        event.preventDefault();
+        const input = event.target.querySelector('#message-input');
+        if (input && input.value.trim()) {
+          sendMessage(input.value);
+          input.value = '';
         }
       }
 
-      for (let i = 0; i < particleCount; i++) {
-        particles.push(new Particle());
-      }
-
-      function drawConstellations() {
-        for (let i = 0; i < particles.length; i++) {
-          for (let j = i + 1; j < particles.length; j++) {
-            const dx = particles[i].x - particles[j].x;
-            const dy = particles[i].y - particles[j].y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
-            if (dist < 120) {
-              ctx.beginPath();
-              ctx.moveTo(particles[i].x, particles[i].y);
-              ctx.lineTo(particles[j].x, particles[j].y);
-              ctx.strokeStyle = state.isDarkMode ? 'rgba(35, 194, 206, 0.12)' : 'rgba(219, 58, 176, 0.12)';
-              ctx.lineWidth = 1 - dist / 120;
-              ctx.stroke();
-            }
-          }
+      function handleChange(event) {
+        if (event.target.matches('[data-action="upload-image"]')) {
+          const file = event.target.files && event.target.files[0];
+          if (!file) return;
+          compressImage(file).then((result) => {
+            if (result) sendMessage('', result);
+          });
+          event.target.value = '';
         }
       }
 
-      function animate() {
-        ctx.clearRect(0, 0, width, height);
-        particles.forEach((p) => {
-          p.update();
-          p.draw();
-        });
-        drawConstellations();
-        requestAnimationFrame(animate);
-      }
-
-      window.addEventListener('resize', () => {
-        width = canvas.width = window.innerWidth;
-        height = canvas.height = window.innerHeight;
-      });
-
-      animate();
-    }
-
-    function playNotificationSound() {
-      if (!state.soundEnabled) return;
-      try {
-        if (!audioCtxInstance) {
-          const AudioCtx = window.AudioContext || window.webkitAudioContext;
-          if (AudioCtx) audioCtxInstance = new AudioCtx();
-        }
-        if (audioCtxInstance && audioCtxInstance.state === 'suspended') {
-          audioCtxInstance.resume();
-        }
-        if (!audioCtxInstance) return;
-
-        const osc = audioCtxInstance.createOscillator();
-        const gain = audioCtxInstance.createGain();
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(587.33, audioCtxInstance.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(880, audioCtxInstance.currentTime + 0.15);
-        gain.gain.setValueAtTime(0.08, audioCtxInstance.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, audioCtxInstance.currentTime + 0.15);
-        osc.connect(gain);
-        gain.connect(audioCtxInstance.destination);
-        osc.start();
-        osc.stop(audioCtxInstance.currentTime + 0.15);
-      } catch (e) {}
-    }
-
-    function isSingleEmoji(text) {
-      if (!text) return false;
-      const trimmed = text.trim();
-      const emojiRegex = /^(\p{Extended_Pictographic}|\p{Emoji_Presentation})$/u;
-      return emojiRegex.test(trimmed);
-    }
-
-    function compressImage(file) {
-      return new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.readAsDataURL(file);
-        reader.onload = (e) => {
-          const img = new Image();
-          img.src = e.target.result;
-          img.onload = () => {
-            let width = img.width;
-            let height = img.height;
-            const max = 800;
-            if (width > max || height > max) {
-              if (width > height) {
-                height = Math.round((height * max) / width);
-                width = max;
-              } else {
-                width = Math.round((width * max) / height);
-                height = max;
-              }
-            }
-            const canvas = document.createElement('canvas');
-            canvas.width = width;
-            canvas.height = height;
-            const ctx = canvas.getContext('2d');
-            ctx.drawImage(img, 0, 0, width, height);
-            resolve(canvas.toDataURL('image/jpeg', 0.7));
-          };
-          img.onerror = () => resolve(e.target.result);
-        };
-        reader.onerror = () => resolve(null);
-      });
-    }
-
-    function loadMessagesFromStorage() {
-      try {
-        const stored = localStorage.getItem(`nova_msgs_${state.roomId}`);
-        if (stored) {
-          state.messages = JSON.parse(stored);
-        } else {
-          state.messages = [];
-        }
-      } catch (e) {
-        state.messages = [];
-      }
-    }
-
-    function saveAndSyncMessages() {
-      try {
-        localStorage.setItem(`nova_msgs_${state.roomId}`, JSON.stringify(state.messages));
-      } catch (e) {}
-    }
-
-    async function sendMessage(text, mediaUrl = null) {
-      if (!text.trim() && !mediaUrl) return;
-
-      const msgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
-      const msg = {
-        id: msgId,
-        roomId: state.roomId,
-        senderId: state.currentUserId,
-        receiverId: state.activeChatUserId,
-        text: text.trim(),
-        mediaUrl: mediaUrl || null,
-        timestamp: Date.now(),
-        reactions: {}
-      };
-
-      // 1. Local state update
-      state.messages.push(msg);
-      saveAndSyncMessages();
-      render();
-      scrollToBottom();
-
-      // 2. Broadcast live cross-device message via WebSocket MQTT Relay
-      if (mqttClient && isMqttConnected) {
+      function bootApp() {
         try {
-          const roomTopic = `nova/rooms/${state.roomId}/channel`;
-          mqttClient.publish(roomTopic, JSON.stringify({ type: 'NEW_MESSAGE', msg: msg }));
-        } catch(e) {
-          console.error("MQTT broadcast error:", e);
+          initBackgroundCanvas();
+          resetMqtt();
+          loadFirebase();
+          render();
+          document.addEventListener('click', handleClick);
+          document.addEventListener('input', handleInput);
+          document.addEventListener('submit', handleSubmit);
+          document.addEventListener('change', handleChange);
+          window.addEventListener('error', (event) => {
+            console.error('Nova App Guarded Error:', event.error || event.message);
+            const fallback = document.getElementById('error-fallback');
+            if (fallback) fallback.classList.remove('hidden');
+          });
+        } catch (error) {
+          console.error('Boot error:', error);
         }
       }
 
-      // 3. Save to Firestore if available
-      if (isCloudConnected && db && auth?.currentUser) {
-        try {
-          const msgDoc = doc(db, 'artifacts', appId, 'public', 'data', 'messages', msgId);
-          await setDoc(msgDoc, msg);
-        } catch (e) {
-          console.error("Error sending message to cloud:", e);
-        }
-      }
-    }
-
-    async function deleteMessage(msgId) {
-      state.selectedPickerMsgId = null;
-      state.messages = state.messages.filter(m => m.id !== msgId);
-      saveAndSyncMessages();
-      render();
-
-      // Broadcast delete to connected devices
-      if (mqttClient && isMqttConnected) {
-        try {
-          const roomTopic = `nova/rooms/${state.roomId}/channel`;
-          mqttClient.publish(roomTopic, JSON.stringify({ type: 'DELETE_MESSAGE', msgId: msgId }));
-        } catch(e) {}
-      }
-
-      if (isCloudConnected && db && auth?.currentUser) {
-        try {
-          const msgDoc = doc(db, 'artifacts', appId, 'public', 'data', 'messages', msgId);
-          await deleteDoc(msgDoc);
-        } catch (e) {
-          console.error("Error deleting cloud message:", e);
-        }
-      }
-    }
-
-    async function toggleReaction(msgId, emoji) {
-      const msg = state.messages.find(m => m.id === msgId);
-      if (!msg) return;
-
-      if (!msg.reactions) msg.reactions = {};
-      const currentUsers = msg.reactions[emoji] || [];
-
-      let newUsers;
-      if (currentUsers.includes(state.currentUserId)) {
-        newUsers = currentUsers.filter(u => u !== state.currentUserId);
-      } else {
-        newUsers = [...currentUsers, state.currentUserId];
-      }
-
-      const updatedReactions = { ...msg.reactions };
-      if (newUsers.length === 0) {
-        delete updatedReactions[emoji];
-      } else {
-        updatedReactions[emoji] = newUsers;
-      }
-
-      state.selectedPickerMsgId = null;
-      msg.reactions = updatedReactions;
-      saveAndSyncMessages();
-      render();
-
-      // Broadcast reaction update to connected devices
-      if (mqttClient && isMqttConnected) {
-        try {
-          const roomTopic = `nova/rooms/${state.roomId}/channel`;
-          mqttClient.publish(roomTopic, JSON.stringify({ type: 'REACTION_UPDATE', msgId: msgId, reactions: updatedReactions }));
-        } catch(e) {}
-      }
-
-      if (isCloudConnected && db && auth?.currentUser) {
-        try {
-          const msgDoc = doc(db, 'artifacts', appId, 'public', 'data', 'messages', msgId);
-          await setDoc(msgDoc, { ...msg, reactions: updatedReactions });
-        } catch (e) {
-          console.error("Error updating reaction on cloud:", e);
-        }
-      }
-    }
-
-    function render() {
-      const app = document.getElementById('app');
-      if (!app) return;
-
-      const currentUser = PROFILES[state.currentUserId] || PROFILES.user1;
-      const activePartner = PROFILES[state.activeChatUserId] || PROFILES.user2;
-
-      const activeMsgs = state.messages.filter(
-        m => (m.senderId === state.currentUserId && m.receiverId === state.activeChatUserId) ||
-             (m.senderId === state.activeChatUserId && m.receiverId === state.currentUserId)
-      );
-
-      const filteredContacts = Object.values(PROFILES).filter(p => 
-        p.id !== state.currentUserId && p.name.toLowerCase().includes(state.searchQuery.toLowerCase())
-      );
-
-      const themeBg = 'bg-[#1f1745] text-[#ced2e7]';
-      const headerBg = 'bg-[#140E26]/90 text-[#ced2e7] border-none';
-      const containerBg = 'bg-[#140E26]/85 shadow-2xl border-none';
-      const sidebarBg = 'bg-[#140E26]/60 border-none';
-
-      app.className = `h-full w-full flex flex-col font-sans transition-colors duration-300 overflow-hidden ${themeBg}`;
-
-      app.innerHTML = `
-        <!-- Top Header Bar -->
-        <header class="px-3 sm:px-4 py-2.5 flex items-center justify-between text-xs glass-card z-30 shrink-0 pt-safe ${headerBg}">
-          <div class="flex items-center space-x-2">
-            <span class="font-extrabold tracking-wider text-[#db3ab0] text-xl leading-none px-1">
-              NOVA
-            </span>
-            <button onclick="copyRoomCode()" class="text-[#ced2e7] hover:text-[#23c2ce] font-medium transition-all text-xs" title="Click to copy Room Code">
-              Room Code: <strong class="font-mono text-[#23c2ce]">${state.roomId}</strong>${state.copySuccess ? ' <span class="text-[#23c2ce] font-normal">(Copied!)</span>' : ''}
-            </button>
-          </div>
-
-          <div class="flex items-center space-x-1.5 sm:space-x-2">
-            <!-- Profile Switcher for this device -->
-            ${Object.values(PROFILES).map(p => {
-              const isSelf = p.id === state.currentUserId;
-              const activeBadge = p.id === 'user1'
-                ? 'bg-[#db3ab0] text-[#ced2e7] font-bold shadow-md shadow-[#db3ab0]/20'
-                : 'bg-[#23c2ce] text-[#ced2e7] font-bold shadow-md shadow-[#23c2ce]/20';
-              return `
-                <button onclick="switchUser('${p.id}')" class="flex items-center space-x-1 px-2.5 py-1 rounded-lg text-xs transition-all active:scale-95 ${isSelf ? activeBadge : 'bg-[#0e0b21] text-[#ced2e7] hover:text-[#23c2ce]'}" title="Set this device active profile to ${p.name}">
-                  <span class="text-sm">${p.avatar}</span>
-                  <span class="font-semibold text-xs">${p.name}</span>
-                </button>
-              `;
-            }).join('')}
-
-            <button onclick="toggleSound()" class="p-1.5 rounded-lg text-[#ced2e7] hover:text-[#23c2ce] active:scale-95" title="Toggle Sound">
-              ${state.soundEnabled ? '🔈' : '🔇'}
-            </button>
-            <button onclick="openSettings()" class="p-1.5 rounded-lg text-[#ced2e7] hover:text-[#23c2ce] active:scale-95" title="Room & Sync Settings">
-              ⚙️
-            </button>
-            <button onclick="toggleTheme()" class="p-1.5 rounded-lg text-[#ced2e7] hover:text-[#23c2ce] active:scale-95" title="Toggle Theme">
-              ${state.isDarkMode ? '🌙' : '☀️'}
-            </button>
-          </div>
-        </header>
-
-        <!-- Main Body Container -->
-        <div class="flex-1 w-full max-w-6xl mx-auto p-2 sm:p-3 md:p-4 flex gap-3 sm:gap-4 overflow-hidden">
-          
-          <!-- Contacts / Sidebar Container -->
-          <div class="w-full sm:w-80 md:w-88 flex flex-col shrink-0 h-full rounded-2xl sm:rounded-3xl overflow-hidden shadow-2xl glass-card transition-all ${state.showMobileSidebar ? 'flex' : 'hidden sm:flex'} ${containerBg}">
-            <div class="p-3.5 flex items-center justify-between bg-[#0e0b21] rounded-t-2xl sm:rounded-t-3xl border-b border-[#0e0b21]/50">
-              <div class="flex items-center space-x-2.5">
-                <span class="text-2xl">${currentUser.avatar}</span>
-                <div>
-                  <h2 class="font-bold text-sm leading-tight">${currentUser.name}</h2>
-                  <p class="text-[11px] font-medium ${currentUser.textColor}">Current Profile</p>
-                </div>
-              </div>
-            </div>
-
-            <div class="p-2.5">
-              <input
-                type="text"
-                placeholder="Search contacts..."
-                value="${state.searchQuery}"
-                oninput="updateSearch(this.value)"
-                class="w-full px-3 py-2 rounded-xl text-xs focus:outline-none bg-[#0e0b21] text-[#23c2ce] placeholder-[#ced2e7] shadow-inner"
-              />
-            </div>
-
-            <div class="flex-1 overflow-y-auto px-2 space-y-1 smooth-scroll pb-3">
-              ${filteredContacts.map(contact => {
-                const isSelected = contact.id === state.activeChatUserId;
-                const lastMsg = state.messages
-                  .filter(m => (m.senderId === state.currentUserId && m.receiverId === contact.id) || (m.senderId === contact.id && m.receiverId === currentUserId))
-                  .pop();
-
-                return `
-                  <button onclick="selectContact('${contact.id}')" class="w-full p-3 rounded-2xl flex items-center space-x-3 text-left transition-all active:scale-98 bg-[#0e0b21] text-[#ced2e7]">
-                    <div class="w-11 h-11 rounded-2xl ${contact.color} flex items-center justify-center text-xl shadow-md shrink-0">
-                      ${contact.avatar}
-                    </div>
-                    <div class="flex-1 min-w-0">
-                      <div class="flex items-center justify-between mb-0.5">
-                        <span class="font-semibold text-xs truncate text-[#ced2e7]">${contact.name}</span>
-                      </div>
-                      <p class="text-xs ${contact.textColor} truncate">
-                        ${lastMsg ? (lastMsg.mediaUrl ? '📷 Attachment' : lastMsg.text) : '<span class="italic">No messages</span>'}
-                      </p>
-                    </div>
-                  </button>
-                `;
-              }).join('')}
-            </div>
-          </div>
-
-          <!-- Active Messaging Area Container -->
-          <div class="flex-1 flex flex-col h-full rounded-2xl sm:rounded-3xl overflow-hidden shadow-2xl glass-card transition-all ${!state.showMobileSidebar ? 'flex' : 'hidden sm:flex'} ${containerBg}">
-            <!-- Chat Header -->
-            <div class="px-4 py-3 flex items-center justify-between shrink-0 bg-[#0e0b21] rounded-t-2xl sm:rounded-t-3xl border-b border-[#0e0b21]/50">
-              <div class="flex items-center space-x-3">
-                <button onclick="showSidebar()" class="sm:hidden text-[#23c2ce] font-bold text-xs p-1">◀ Contacts</button>
-                <div class="w-9 h-9 rounded-xl ${activePartner.color} flex items-center justify-center text-lg shadow-sm">
-                  ${activePartner.avatar}
-                </div>
-                <div>
-                  <h2 class="font-bold text-sm leading-tight">${activePartner.name}</h2>
-                  <p class="text-[11px] font-medium ${activePartner.textColor}">${activePartner.handle}</p>
-                </div>
-              </div>
-            </div>
-
-            <!-- Messages Feed -->
-            <div id="message-feed" class="flex-1 p-3 sm:p-4 overflow-y-auto space-y-3 smooth-scroll bg-[#140E26]/30">
-              ${activeMsgs.length === 0 ? `
-                <div class="h-full flex flex-col items-center justify-center text-center p-6 space-y-2">
-                  <div class="text-4xl mb-1">${activePartner.avatar}</div>
-                  <h3 class="font-bold text-[#23c2ce] text-sm">Messaging ${activePartner.name}</h3>
-                  <p class="text-xs text-[#ced2e7] max-w-sm">
-                    Enter Room Code <strong class="text-[#23c2ce] font-mono">${state.roomId}</strong> on your other device to connect live instantly.
-                  </p>
-                </div>
-              ` : activeMsgs.map(msg => renderMessageBubble(msg)).join('')}
-            </div>
-
-            <div class="p-2.5 sm:p-3 shrink-0 pb-safe bg-[#0e0b21] rounded-b-2xl sm:rounded-b-3xl">
-              <form onsubmit="handleSendSubmit(event)" class="flex items-center space-x-1.5 sm:space-x-2">
-                <label class="cursor-pointer p-2 rounded-xl text-[#ced2e7] hover:text-[#23c2ce] text-lg transition-transform active:scale-95" title="Attach Image File">
-                  📎
-                  <input type="file" accept="image/*" onchange="handleFileUpload(event)" class="hidden" />
-                </label>
-
-                <input
-                  id="message-input"
-                  type="text"
-                  placeholder="Message to ${activePartner.name}..."
-                  class="flex-1 px-4 py-2.5 rounded-full text-xs sm:text-sm focus:outline-none transition-all bg-[#140E26] text-[#ced2e7] placeholder-[#ced2e7]/60 shadow-inner"
-                />
-
-                <button type="submit" class="px-4 py-2.5 rounded-full text-xs font-bold transition-all ${state.currentUserId === 'user1' ? 'bg-[#db3ab0] text-[#ced2e7] shadow-md shadow-[#db3ab0]/20 active:scale-95' : 'bg-[#23c2ce] text-[#ced2e7] shadow-md shadow-[#23c2ce]/20 active:scale-95'}">
-                  Send
-                </button>
-              </form>
-            </div>
-          </div>
-
-        </div>
-
-        <!-- Settings Modal -->
-        ${state.showSettings ? renderSettingsModal() : ''}
-      `;
-    }
-
-    function renderMessageBubble(msg) {
-      const isMe = msg.senderId === state.currentUserId;
-      const singleEmoji = isSingleEmoji(msg.text) && !msg.mediaUrl;
-      const formattedTime = new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      const myGradient = msg.senderId === 'user1'
-        ? 'bg-[#db3ab0] text-[#ced2e7]'
-        : 'bg-[#23c2ce] text-[#ced2e7]';
-
-      const showPicker = state.selectedPickerMsgId === msg.id;
-      const reactions = msg.reactions || {};
-
-      return `
-        <div class="group relative flex flex-col my-1 ${isMe ? 'items-end' : 'items-start'}">
-          ${showPicker ? `
-            <div class="absolute -top-9 ${isMe ? 'right-2' : 'left-2'} bg-[#140E26] backdrop-blur-md rounded-full px-2.5 py-1 flex items-center space-x-1.5 shadow-xl z-20">
-              ${REACTION_EMOJIS.map(emoji => {
-                const hasReacted = (reactions[emoji] || []).includes(state.currentUserId);
-                return `
-                  <button onclick="toggleReaction('${msg.id}', '${emoji}')" class="text-sm p-1 rounded-full transition-transform active:scale-125 ${hasReacted ? 'bg-[#1f1745]' : 'hover:bg-[#1f1745]'}">
-                    ${emoji}
-                  </button>
-                `;
-              }).join('')}
-              ${isMe ? `
-                <button onclick="deleteMessage('${msg.id}')" class="text-[#ced2e7] hover:text-red-400 text-xs p-1 ml-1" title="Delete message">🗑️</button>
-              ` : ''}
-            </div>
-          ` : ''}
-
-          ${singleEmoji ? `
-            <div onclick="togglePicker('${msg.id}')" class="cursor-pointer transition-transform active:scale-110 text-5xl sm:text-6xl p-1 select-none my-0.5">
-              ${msg.text}
-            </div>
-          ` : `
-            <div onclick="togglePicker('${msg.id}')" class="cursor-pointer transition-all max-w-[85%] sm:max-w-[75%] px-3.5 py-2.5 rounded-2xl text-xs sm:text-sm shadow-sm ${isMe ? `${myGradient} font-medium` : 'bg-[#140E26] text-[#ced2e7]'}">
-              ${msg.mediaUrl ? `
-                <div class="mb-2 overflow-hidden rounded-xl max-w-xs">
-                  <img src="${msg.mediaUrl}" alt="Attachment" class="max-h-56 w-full object-cover rounded-lg" onerror="this.style.display='none'" />
-                </div>
-              ` : ''}
-              ${msg.text ? `<p class="leading-relaxed break-words">${msg.text}</p>` : ''}
-              <div class="mt-1 text-[9px] text-right ${isMe ? 'text-[#ced2e7]/80' : 'text-[#ced2e7]/60'}">
-                ${formattedTime}
-              </div>
-            </div>
-          `}
-
-          ${Object.keys(reactions).length > 0 ? `
-            <div class="flex flex-wrap gap-1 mt-1 ${isMe ? 'justify-end' : 'justify-start'}">
-              ${Object.entries(reactions).map(([emoji, users]) => {
-                if (!users || users.length === 0) return '';
-                const hasIReacted = users.includes(state.currentUserId);
-                const colorUserId = hasIReacted ? state.currentUserId : users[0];
-                const userProfile = PROFILES[colorUserId];
-                const badgeColor = userProfile ? userProfile.color : 'bg-[#140E26]';
-                const textStyle = 'text-[#ced2e7]';
-                return `
-                  <button onclick="toggleReaction('${msg.id}', '${emoji}')" class="flex items-center space-x-1 text-[10px] px-2 py-0.5 rounded-full font-bold shadow-sm ${badgeColor} ${textStyle}">
-                    <span>${emoji}</span>
-                    <span class="text-[9px] font-mono">${users.length}</span>
-                  </button>
-                `;
-              }).join('')}
-            </div>
-          ` : ''}
-        </div>
-      `;
-    }
-
-    function renderSettingsModal() {
-      return `
-        <div class="fixed inset-0 bg-[#ced2e7]/20 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div class="w-full max-w-md rounded-3xl p-5 sm:p-6 shadow-2xl bg-[#140E26] text-[#ced2e7]">
-            <h3 class="font-extrabold text-base mb-1">Cross-Device Pairing Settings</h3>
-            <p class="text-xs text-[#ced2e7] mb-4">
-              Enter the exact same <strong>Room Code</strong> on your Phone, iPad, or laptop to sync messages live in real-time.
-            </p>
-
-            <div class="mb-4">
-              <label class="block text-xs font-bold text-[#ced2e7] mb-1">Room Sync Code</label>
-              <div class="flex items-center space-x-2">
-                <input id="settings-room-input" type="text" value="${state.roomId}" class="flex-1 px-3 py-2 text-xs rounded-xl bg-[#140E26] text-[#23c2ce] font-mono focus:outline-none shadow-inner" />
-                <button onclick="copyRoomCode()" class="px-3 py-2 bg-[#140E26] hover:bg-[#1f1745] text-[#23c2ce] text-xs font-bold rounded-xl shadow-sm">
-                  Copy
-                </button>
-              </div>
-            </div>
-
-            <div class="flex items-center justify-end space-x-2 pt-2">
-              <button onclick="closeSettings()" class="px-4 py-2 rounded-xl text-xs text-[#ced2e7]">Cancel</button>
-              <button onclick="saveSettings()" class="px-4 py-2 rounded-xl text-xs font-bold bg-[#db3ab0] text-[#ced2e7] shadow-md">
-                Save & Connect Room
-              </button>
-            </div>
-          </div>
-        </div>
-      `;
-    }
-
-    window.copyRoomCode = function() {
-      try {
-        const text = state.roomId;
+      window.copyRoomCode = () => {
         const input = document.createElement('textarea');
-        input.value = text;
+        input.value = state.roomId;
         document.body.appendChild(input);
         input.select();
         document.execCommand('copy');
         document.body.removeChild(input);
-        state.copySuccess = true;
-        render();
-        setTimeout(() => {
-          state.copySuccess = false;
-          render();
-        }, 2000);
-      } catch(e) {}
-    };
+      };
 
-    window.switchUser = function(userId) {
-      state.currentUserId = userId;
-      if (userId === state.activeChatUserId) {
-        state.activeChatUserId = Object.keys(PROFILES).find(id => id !== userId);
+      window.switchUser = (userId) => { state.currentUserId = userId; if (state.currentUserId === state.activeChatUserId) state.activeChatUserId = Object.keys(PROFILES).find((id) => id !== state.currentUserId) || state.currentUserId; render(); };
+      window.toggleSound = () => { state.soundEnabled = !state.soundEnabled; render(); };
+      window.openSettings = () => { state.showSettings = true; render(); };
+      window.closeSettings = () => { state.showSettings = false; render(); };
+      window.toggleTheme = () => { state.isDarkMode = !state.isDarkMode; render(); };
+      window.deleteMessage = deleteMessage;
+      window.toggleReaction = toggleReaction;
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', bootApp, { once: true });
+      } else {
+        bootApp();
       }
-      render();
-    };
-
-    window.selectContact = function(contactId) {
-      state.activeChatUserId = contactId;
-      state.showMobileSidebar = false;
-      render();
-      scrollToBottom();
-    };
-
-    window.showSidebar = function() {
-      state.showMobileSidebar = true;
-      render();
-    };
-
-    window.toggleTheme = function() {
-      state.isDarkMode = !state.isDarkMode;
-      render();
-    };
-
-    window.toggleSound = function() {
-      state.soundEnabled = !state.soundEnabled;
-      render();
-    };
-
-    window.updateSearch = function(query) {
-      state.searchQuery = query;
-      render();
-    };
-
-    window.togglePicker = function(msgId) {
-      state.selectedPickerMsgId = state.selectedPickerMsgId === msgId ? null : msgId;
-      render();
-    };
-
-    window.toggleImageInput = function() {
-      state.showImageInput = !state.showImageInput;
-      render();
-    };
-
-    window.attachImageFromUrl = function() {
-      const input = document.getElementById('img-url-input');
-      if (input && input.value.trim()) {
-        sendMessage('', input.value.trim());
-        state.showImageInput = false;
-      }
-    };
-
-    window.handleFileUpload = async function(e) {
-      const file = e.target.files[0];
-      if (file) {
-        const compressed = await compressImage(file);
-        if (compressed) {
-          sendMessage('', compressed);
-        }
-      }
-      e.target.value = '';
-    };
-
-    window.handleSendSubmit = function(e) {
-      e.preventDefault();
-      const input = document.getElementById('message-input');
-      if (input && input.value.trim()) {
-        sendMessage(input.value);
-        input.value = '';
-      }
-    };
-
-    window.openSettings = function() {
-      state.showSettings = true;
-      render();
-    };
-
-    window.closeSettings = function() {
-      state.showSettings = false;
-      render();
-    };
-
-    window.saveSettings = function() {
-      const roomInput = document.getElementById('settings-room-input');
-      if (roomInput && roomInput.value.trim()) {
-        state.roomId = roomInput.value.trim();
-        localStorage.setItem('nova_room_id', state.roomId);
-        initMqttRelay();
-        if (isCloudConnected) {
-          subscribeToCloudMessages();
-        } else {
-          loadMessagesFromStorage();
-        }
-      }
-      state.showSettings = false;
-      render();
-    };
-
-    window.toggleReaction = toggleReaction;
-    window.deleteMessage = deleteMessage;
-
-    function bootApp() {
-      try {
-        initBackgroundCanvas();
-        initMqttRelay();
-        initFirebaseSync();
-        render();
-        scrollToBottom();
-      } catch (e) {
-        console.error("Boot error:", e);
-      }
-    }
-
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', bootApp);
-    } else {
-      bootApp();
-    }
+    })();
   </script>
 </body>
 </html>
